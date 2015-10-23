@@ -39,8 +39,25 @@ fn list(args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
+fn status(args: &ArgMatches) -> Result<()> {
+    println!("hello from status()");
+    Ok(())
+}
+
 fn add(args: &ArgMatches) -> Result<()> {
     println!("hello from add()");
+    Ok(())
+}
+
+fn remove(args: &ArgMatches) -> Result<()> {
+    println!("hello from remove()");
+    Ok(())
+}
+
+fn create(args: &ArgMatches) -> Result<()> {
+    let name = args.value_of("froyodev").unwrap();
+    let devs = args.values_of("devices").unwrap();
+    dbgp!("Creating {}", name);
     Ok(())
 }
 
@@ -74,7 +91,7 @@ fn main() {
                          .required(true)
                          .index(1))
                     .arg(Arg::with_name("devices")
-                         .help("device to add")
+                         .help("device(s) to add")
                          .multiple(true)
                          .required(true)
                          .index(2))
@@ -85,8 +102,9 @@ fn main() {
                          .help("Froyodev to remove the device from")
                          .required(true)
                          .index(1))
-                    .arg(Arg::with_name("device")
-                         .help("Block device to remove")
+                    .arg(Arg::with_name("devices")
+                         .help("Block device(s) to remove")
+                         .multiple(true)
                          .required(true)
                          .index(2))
                     )
@@ -111,7 +129,10 @@ fn main() {
 
     let r = match matches.subcommand() {
         ("list", Some(matches)) => list(matches),
+        ("status", Some(matches)) => status(matches),
         ("add", Some(matches)) => add(matches),
+        ("remove", Some(matches)) => remove(matches),
+        ("create", Some(matches)) => create(matches),
         ("", None) => {
             println!("No command given, try \"help\"");
             Ok(())
