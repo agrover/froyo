@@ -1,0 +1,8 @@
+[package]
+name = "froyo"
+version = "0.1.0"
+authors = ["Andy Grover <agrover@redhat.com>"]
+
+[dependencies]
+devicemapper = "0.2.0"
+clap = "1"
