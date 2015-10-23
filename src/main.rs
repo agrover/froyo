@@ -3,11 +3,32 @@ extern crate devicemapper;
 extern crate clap;
 
 use std::io::Result;
+#[allow(unused_imports)]
+use std::io::Write;
 use std::error::Error;
 use std::process::exit;
 
 use devicemapper as devm;
 use clap::{App, Arg, SubCommand, ArgMatches};
+
+static mut debug: bool = false;
+
+macro_rules! dbgp {
+    ($($arg:tt)*) => (
+        unsafe {
+            if debug {
+                println!($($arg)*)
+            }
+        })
+}
+
+macro_rules! errp {
+    ($($arg:tt)*) => (
+        match writeln!(&mut ::std::io::stderr(), $($arg)* ) {
+            Ok(_) => {},
+            Err(x) => panic!("Unable to write to stderr: {}", x),
+        })
+}
 
 fn list(args: &ArgMatches) -> Result<()> {
     println!("hello from list()");
@@ -75,6 +96,11 @@ fn main() {
                          .index(2))
                     )
         .get_matches();
+
+    if matches.is_present("debug") {
+        // must use unsafe to change a mut static, sigh
+        unsafe { debug = true };
+    }
 
     let r = match matches.subcommand() {
         ("list", Some(matches)) => list(matches),
