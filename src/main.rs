@@ -5,15 +5,19 @@
 extern crate devicemapper;
 #[macro_use]
 extern crate clap;
+extern crate nix;
 
-use std::io::Result;
 #[allow(unused_imports)]
-use std::io::Write;
+use std::io;
+use std::io::{Read, Write, ErrorKind};
 use std::error::Error;
 use std::process::exit;
+use std::fs::OpenOptions;
+use std::path::{Path, PathBuf};
 
 use devicemapper as devm;
 use clap::{App, Arg, SubCommand, ArgMatches};
+use nix::sys::stat;
 
 static mut debug: bool = false;
 
@@ -34,30 +38,71 @@ macro_rules! errp {
         })
 }
 
-fn list(args: &ArgMatches) -> Result<()> {
+fn list(args: &ArgMatches) -> io::Result<()> {
     println!("hello from list()");
     Ok(())
 }
 
-fn status(args: &ArgMatches) -> Result<()> {
+fn status(args: &ArgMatches) -> io::Result<()> {
     println!("hello from status()");
     Ok(())
 }
 
-fn add(args: &ArgMatches) -> Result<()> {
+fn add(args: &ArgMatches) -> io::Result<()> {
     println!("hello from add()");
     Ok(())
 }
 
-fn remove(args: &ArgMatches) -> Result<()> {
+fn remove(args: &ArgMatches) -> io::Result<()> {
     println!("hello from remove()");
     Ok(())
 }
 
-fn create(args: &ArgMatches) -> Result<()> {
-    let name = args.value_of("froyodev").unwrap();
-    let devs = args.values_of("devices").unwrap();
-    dbgp!("Creating {}", name);
+fn create(args: &ArgMatches) -> io::Result<()> {
+    let name = args.value_of("froyodevname").unwrap();
+    let dev_paths: Vec<_> = args.values_of("devices").unwrap().into_iter()
+        .map(|dev| {
+            if !Path::new(dev).is_absolute() {
+                PathBuf::from(format!("/dev/{}", dev))
+            } else {
+                PathBuf::from(dev)
+            }})
+        .collect();
+
+    // do some checks
+    for path in &dev_paths {
+        let pstat = match stat::stat(path) {
+            Err(_) => return Err(io::Error::new(
+                ErrorKind::NotFound,
+                format!("{} not found", path.display()))),
+            Ok(x) => x,
+        };
+
+        if pstat.st_mode & 0x6000 != 0x6000 {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} is not a block device", path.display())));
+        }
+
+        let mut f = match OpenOptions::new().read(true).write(true).open(path) {
+            Err(_) => {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    format!("Could not open {}", path.display())));
+            },
+            Ok(x) => x,
+        };
+
+        let mut buf = [0u8; 4096];
+        try!(f.read(&mut buf));
+
+        if buf.iter().any(|x| *x != 0) {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("First 4K of {} is not zeroed, need to use --force",
+                        path.display())));
+        }
+    }
     Ok(())
 }
 
@@ -141,7 +186,7 @@ fn main() {
     };
 
     if let Err(r) = r {
-        println!("there was an error: {}", r.description());
+        errp!("{}", r.description());
         exit(1);
     };
 }
