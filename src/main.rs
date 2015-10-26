@@ -14,8 +14,10 @@ use std::error::Error;
 use std::process::exit;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use devicemapper as devm;
+use devicemapper::Device;
 use clap::{App, Arg, SubCommand, ArgMatches};
 use nix::sys::stat;
 
@@ -36,6 +38,75 @@ macro_rules! errp {
             Ok(_) => {},
             Err(x) => panic!("Unable to write to stderr: {}", x),
         })
+}
+
+struct FroyoDev {
+    dev: Device,
+}
+
+impl FroyoDev {
+    fn new(dev: Device) -> io::Result<FroyoDev> {
+        unimplemented!()
+    }
+
+    fn initialize(f: &mut Froyo, dev: Device, force: bool) -> io::Result<FroyoDev> {
+        let pathbuf = try!(dev.path().ok_or(io::Error::new(
+            ErrorKind::NotFound,
+            format!("Could not get path for {}:{}", dev.major, dev.minor))));
+
+
+        let pstat = match stat::stat(&pathbuf) {
+            Err(_) => return Err(io::Error::new(
+                ErrorKind::NotFound,
+                format!("{} not found", &pathbuf.display()))),
+            Ok(x) => x,
+        };
+
+        if pstat.st_mode & 0x6000 != 0x6000 {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} is not a block device", &pathbuf.display())));
+        }
+
+        let mut f = match OpenOptions::new().read(true).write(true).open(&pathbuf) {
+            Err(_) => {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    format!("Could not open {}", &pathbuf.display())));
+            },
+            Ok(x) => x,
+        };
+
+        if !force {
+            let mut buf = [0u8; 4096];
+            try!(f.read(&mut buf));
+
+            if buf.iter().any(|x| *x != 0) {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("First 4K of {} is not zeroed, need to use --force",
+                            &pathbuf.display())));
+            }
+        }
+
+        println!("initialize the blockdev!");
+
+        Ok(FroyoDev {dev: dev})
+    }
+}
+
+struct Froyo {
+    name: String,
+    devs: Vec<FroyoDev>,
+}
+
+impl Froyo {
+    fn new(name: &str) -> Froyo {
+        Froyo {
+            name: name.to_string(),
+            devs: Vec::new(),
+        }
+    }
 }
 
 fn list(args: &ArgMatches) -> io::Result<()> {
@@ -69,40 +140,22 @@ fn create(args: &ArgMatches) -> io::Result<()> {
             }})
         .collect();
 
-    // do some checks
-    for path in &dev_paths {
-        let pstat = match stat::stat(path) {
+    let mut froyo = Froyo::new(name);
+
+    for path in dev_paths {
+        let dev = match Device::from_str(&path.to_string_lossy()) {
+            Ok(x) => x,
             Err(_) => return Err(io::Error::new(
-                ErrorKind::NotFound,
-                format!("{} not found", path.display()))),
-            Ok(x) => x,
+                ErrorKind::InvalidInput,
+                format!("{} is not a block device", path.display())))
         };
 
-        if pstat.st_mode & 0x6000 != 0x6000 {
-            return Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("{} is not a block device", path.display())));
-        }
-
-        let mut f = match OpenOptions::new().read(true).write(true).open(path) {
-            Err(_) => {
-                return Err(io::Error::new(
-                    ErrorKind::PermissionDenied,
-                    format!("Could not open {}", path.display())));
-            },
-            Ok(x) => x,
-        };
-
-        let mut buf = [0u8; 4096];
-        try!(f.read(&mut buf));
-
-        if buf.iter().any(|x| *x != 0) {
-            return Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("First 4K of {} is not zeroed, need to use --force",
-                        path.display())));
-        }
+        dbgp!("Initializing {}", &path.display());
+        let fd = try!(FroyoDev::initialize(&mut froyo, dev, args.is_present("force")));
     }
+
+    // TODO: Build froyodev on top of our newly created blockdevs
+
     Ok(())
 }
 
