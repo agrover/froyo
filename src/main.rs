@@ -2,24 +2,40 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+#![feature(slice_bytes)]
+
 extern crate devicemapper;
 #[macro_use]
 extern crate clap;
 extern crate nix;
+extern crate crc;
+extern crate byteorder;
+extern crate uuid;
+extern crate time;
 
 #[allow(unused_imports)]
 use std::io;
-use std::io::{Read, Write, ErrorKind};
+use std::io::{Read, Write, ErrorKind, Seek, SeekFrom};
 use std::error::Error;
 use std::process::exit;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::slice::bytes::copy_memory;
+use std::os::unix::prelude::AsRawFd;
 
 use devicemapper as devm;
 use devicemapper::Device;
 use clap::{App, Arg, SubCommand, ArgMatches};
-use nix::sys::stat;
+use nix::sys::{stat, ioctl};
+use crc::crc32;
+use byteorder::{LittleEndian, ByteOrder};
+use uuid::Uuid;
+
+const FRO_HEADER_SIZE: usize = 512;
+const SECTOR_SIZE: usize = 512;
+const FRO_MDA_ZONE_SIZE: usize = (1024 * 1024);
+const FRO_MAGIC: &'static [u8] = b"!IamFroy0\x86\xffGO\x02^\x41";
 
 static mut debug: bool = false;
 
@@ -38,6 +54,17 @@ macro_rules! errp {
             Ok(_) => {},
             Err(x) => panic!("Unable to write to stderr: {}", x),
         })
+}
+
+fn blkdev_size(file: &File) -> io::Result<u64> {
+    // BLKGETSIZE64
+    let op = ioctl::op_read(0x12, 114, 8);
+    let mut val: u64 = 0;
+
+    match unsafe { ioctl::read_into(file.as_raw_fd(), op, &mut val) } {
+        Err(_) => return Err((io::Error::last_os_error())),
+        Ok(_) => Ok(val),
+    }
 }
 
 struct FroyoDev {
@@ -90,6 +117,22 @@ impl FroyoDev {
         }
 
         println!("initialize the blockdev!");
+        let mut buf = [0u8; FRO_MDA_ZONE_SIZE];
+
+        copy_memory(FRO_MAGIC, &mut buf[4..20]);
+        LittleEndian::write_u64(
+            &mut buf[20..28], blkdev_size(&f).unwrap() / SECTOR_SIZE as u64);
+        // no flags
+        copy_memory(Uuid::new_v4().to_simple_string().as_bytes(), &mut buf[32..64]);
+        // no MDAs in use yet
+
+        // All done, calc CRC and write
+        let crc = crc32::checksum_ieee(&buf[4..FRO_HEADER_SIZE]);
+        LittleEndian::write_u32(&mut buf[..4], crc);
+
+        try!(f.seek(SeekFrom::Start(0)));
+        f.write_all(&buf);
+        f.flush();
 
         Ok(FroyoDev {dev: dev})
     }
