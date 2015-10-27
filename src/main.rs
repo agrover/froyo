@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::slice::bytes::copy_memory;
 use std::os::unix::prelude::AsRawFd;
+use std::fmt;
 
 use devicemapper as devm;
 use devicemapper::Device;
@@ -61,6 +62,52 @@ macro_rules! errp {
             Err(x) => panic!("Unable to write to stderr: {}", x),
         })
 }
+
+// Define a common error enum.
+// See http://blog.burntsushi.net/rust-error-handling/
+#[derive(Debug)]
+enum FroyoError {
+    Io(io::Error),
+    Serde(serde_json::error::Error),
+}
+
+impl fmt::Display for FroyoError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            FroyoError::Io(ref err) => write!(f, "IO error: {}", err),
+            FroyoError::Serde(ref err) => write!(f, "Serde error: {}", err),
+        }
+    }
+}
+
+impl Error for FroyoError {
+    fn description(&self) -> &str {
+        match *self {
+            FroyoError::Io(ref err) => err.description(),
+            FroyoError::Serde(ref err) => Error::description(err),
+        }
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        match *self {
+            FroyoError::Io(ref err) => Some(err),
+            FroyoError::Serde(ref err) => Some(err),
+        }
+    }
+}
+
+impl From<io::Error> for FroyoError {
+    fn from(err: io::Error) -> FroyoError {
+        FroyoError::Io(err)
+    }
+}
+
+impl From<serde_json::error::Error> for FroyoError {
+    fn from(err: serde_json::error::Error) -> FroyoError {
+        FroyoError::Serde(err)
+    }
+}
+
 
 fn blkdev_size(file: &File) -> io::Result<u64> {
     // BLKGETSIZE64
@@ -168,27 +215,27 @@ impl Froyo {
     }
 }
 
-fn list(args: &ArgMatches) -> io::Result<()> {
+fn list(args: &ArgMatches) -> Result<(), FroyoError> {
     println!("hello from list()");
     Ok(())
 }
 
-fn status(args: &ArgMatches) -> io::Result<()> {
+fn status(args: &ArgMatches) -> Result<(), FroyoError> {
     println!("hello from status()");
     Ok(())
 }
 
-fn add(args: &ArgMatches) -> io::Result<()> {
+fn add(args: &ArgMatches) -> Result<(), FroyoError> {
     println!("hello from add()");
     Ok(())
 }
 
-fn remove(args: &ArgMatches) -> io::Result<()> {
+fn remove(args: &ArgMatches) -> Result<(), FroyoError> {
     println!("hello from remove()");
     Ok(())
 }
 
-fn create(args: &ArgMatches) -> io::Result<()> {
+fn create(args: &ArgMatches) -> Result<(), FroyoError> {
     let name = args.value_of("froyodevname").unwrap();
     let dev_paths: Vec<_> = args.values_of("devices").unwrap().into_iter()
         .map(|dev| {
@@ -203,9 +250,9 @@ fn create(args: &ArgMatches) -> io::Result<()> {
     for path in dev_paths {
         let dev = match Device::from_str(&path.to_string_lossy()) {
             Ok(x) => x,
-            Err(_) => return Err(io::Error::new(
+            Err(_) => return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} is not a block device", path.display())))
+                format!("{} is not a block device", path.display()))))
         };
 
         dbgp!("Initializing {}", &path.display());
@@ -214,7 +261,7 @@ fn create(args: &ArgMatches) -> io::Result<()> {
     }
 
     // TODO: Build froyodev on top of our newly created blockdevs
-    try!(Froyo::create(name, fds));
+    let froyo = try!(Froyo::create(name, fds));
 
     dbgp!("Created {}", name);
 
