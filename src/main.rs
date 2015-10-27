@@ -2,7 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#![feature(slice_bytes)]
+#![feature(slice_bytes, custom_derive, plugin)]
+#![plugin(serde_macros)]
 
 extern crate devicemapper;
 #[macro_use]
@@ -12,6 +13,8 @@ extern crate crc;
 extern crate byteorder;
 extern crate uuid;
 extern crate time;
+extern crate serde;
+extern crate serde_json;
 
 #[allow(unused_imports)]
 use std::io;
@@ -67,6 +70,7 @@ fn blkdev_size(file: &File) -> io::Result<u64> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
 struct FroyoDev {
     dev: Device,
 }
@@ -76,7 +80,7 @@ impl FroyoDev {
         unimplemented!()
     }
 
-    fn initialize(f: &mut Froyo, dev: Device, force: bool) -> io::Result<FroyoDev> {
+    fn initialize(dev: Device, force: bool) -> io::Result<FroyoDev> {
         let pathbuf = try!(dev.path().ok_or(io::Error::new(
             ErrorKind::NotFound,
             format!("Could not get path for {}:{}", dev.major, dev.minor))));
@@ -116,7 +120,6 @@ impl FroyoDev {
             }
         }
 
-        println!("initialize the blockdev!");
         let mut buf = [0u8; FRO_MDA_ZONE_SIZE];
 
         copy_memory(FRO_MAGIC, &mut buf[4..20]);
@@ -138,17 +141,18 @@ impl FroyoDev {
     }
 }
 
+#[derive(Debug)]
 struct Froyo {
     name: String,
     devs: Vec<FroyoDev>,
 }
 
 impl Froyo {
-    fn new(name: &str) -> Froyo {
-        Froyo {
+    fn create(name: &str, fds: Vec<FroyoDev>) -> io::Result<Froyo> {
+        Ok(Froyo {
             name: name.to_string(),
-            devs: Vec::new(),
-        }
+            devs: fds,
+        })
     }
 }
 
@@ -183,8 +187,7 @@ fn create(args: &ArgMatches) -> io::Result<()> {
             }})
         .collect();
 
-    let mut froyo = Froyo::new(name);
-
+    let mut fds = Vec::new();
     for path in dev_paths {
         let dev = match Device::from_str(&path.to_string_lossy()) {
             Ok(x) => x,
@@ -194,10 +197,14 @@ fn create(args: &ArgMatches) -> io::Result<()> {
         };
 
         dbgp!("Initializing {}", &path.display());
-        let fd = try!(FroyoDev::initialize(&mut froyo, dev, args.is_present("force")));
+        let fd = try!(FroyoDev::initialize(dev, args.is_present("force")));
+        fds.push(fd);
     }
 
     // TODO: Build froyodev on top of our newly created blockdevs
+    try!(Froyo::create(name, fds));
+
+    dbgp!("Created {}", name);
 
     Ok(())
 }
