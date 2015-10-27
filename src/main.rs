@@ -143,8 +143,11 @@ impl FroyoDev {
         LittleEndian::write_u32(&mut buf[..4], crc);
 
         try!(f.seek(SeekFrom::Start(0)));
-        f.write_all(&buf);
-        f.flush();
+        try!(f.write_all(&buf));
+        try!(f.seek(SeekFrom::End(-(FRO_MDA_ZONE_SIZE as i64))));
+        try!(f.write_all(&buf));
+
+        try!(f.flush());
 
         Ok(FroyoDev {dev: dev})
     }
