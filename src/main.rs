@@ -35,10 +35,13 @@ use crc::crc32;
 use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
 
-const FRO_HEADER_SIZE: usize = 512;
 const SECTOR_SIZE: usize = 512;
+const FRO_HEADER_SIZE: usize = 512;
 const FRO_MDA_ZONE_SIZE: usize = (1024 * 1024);
 const FRO_MAGIC: &'static [u8] = b"!IamFroy0\x86\xffGO\x02^\x41";
+
+// No devs smaller than a gig
+const MIN_DEV_SIZE: usize = (1024 * 1024 * 1024);
 
 static mut debug: bool = false;
 
@@ -120,11 +123,17 @@ impl FroyoDev {
             }
         }
 
+        let dev_size = try!(blkdev_size(&f));
+        if dev_size < MIN_DEV_SIZE as u64 {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} too small, 1G minimum", &pathbuf.display())));
+        }
+
         let mut buf = [0u8; FRO_MDA_ZONE_SIZE];
 
         copy_memory(FRO_MAGIC, &mut buf[4..20]);
-        LittleEndian::write_u64(
-            &mut buf[20..28], blkdev_size(&f).unwrap() / SECTOR_SIZE as u64);
+        LittleEndian::write_u64(&mut buf[20..28], dev_size / SECTOR_SIZE as u64);
         // no flags
         copy_memory(Uuid::new_v4().to_simple_string().as_bytes(), &mut buf[32..64]);
         // no MDAs in use yet
