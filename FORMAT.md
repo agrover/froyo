@@ -5,34 +5,36 @@ base block device for its configuration.
 
 The zones are identical (lengths in 512-byte sectors):
 
-offset  length  description
-0       1       signature block
-1       7       unused
-8       1020    metadata area A (MDAA)
-1028    1020    metadata area B (MDAB)
+| offset | length | description
+|--------|--------|-------
+|0       |1       |signature block
+|1       |7       |unused
+|8       |1020    |metadata area A (MDAA)
+|1028    |1020    |metadata area B (MDAB)
 
 
 The format of the signature block is (lengths in bytes):
 
 All values little-endian.
 
-offset  length  description
-0       4       CRC32 of signature block (bytes at offset 4 len 508)
-4       16      Froyo signature "!IamFroy0\x86\xffGO\x02^\x41"
-20      8       Device size in 512-byte sectors (u64)
-28      4       flags
-32      32      Hex UUID for the block device
-64      8       MDAA timestamp (u64)
-72      4       MDAA serial (u32)
-76      4       MDAA used length in bytes (u32)
-80      4       MDAA CRC32
-84      12      unused
-96      8       MDAB timestamp (u64)
-104     4       MDAB serial (u32)
-108     4       MDAB used length in bytes (u32)
-112     4       MDAB CRC32
-116     12      unused
-128     384     unused
+|offset  |length  |description
+|--------|--------|-----------
+|0       |4       |CRC32 of signature block (bytes at offset 4 len 508)
+|4       |16      |Froyo signature ```!IamFroy0\x86\xffGO\x02^\x41```
+|20      |8       |Device size in 512-byte sectors (u64)
+|28      |4       |flags
+|32      |32      |Hex UUID for the block device
+|64      |8       |MDAA timestamp (u64)
+|72      |4       |MDAA serial (u32)
+|76      |4       |MDAA used length in bytes (u32)
+|80      |4       |MDAA CRC32
+|84      |12      |unused
+|96      |8       |MDAB timestamp (u64)
+|104     |4       |MDAB serial (u32)
+|108     |4       |MDAB used length in bytes (u32)
+|112     |4       |MDAB CRC32
+|116     |12      |unused
+|128     |384     |unused
 
 All "flags" or "unused" ranges are zeroed.
 
