@@ -28,8 +28,7 @@ use std::slice::bytes::copy_memory;
 use std::os::unix::prelude::AsRawFd;
 use std::fmt;
 
-use devicemapper as devm;
-use devicemapper::Device;
+use devicemapper::{DM, Device, DmFlags};
 use clap::{App, Arg, SubCommand, ArgMatches};
 use nix::sys::{stat, ioctl};
 use crc::crc32;
@@ -120,40 +119,75 @@ fn blkdev_size(file: &File) -> io::Result<u64> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct FroyoDev {
     dev: Device,
+    path: PathBuf,
 }
 
 impl FroyoDev {
-    fn new(dev: Device) -> io::Result<FroyoDev> {
-        unimplemented!()
-    }
+    fn new(path: &Path) -> io::Result<FroyoDev> {
+        let dev = match Device::from_str(&path.to_string_lossy()) {
+            Ok(x) => x,
+            Err(_) => return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} is not a block device", path.display())))
+        };
 
-    fn initialize(dev: Device, force: bool) -> io::Result<FroyoDev> {
-        let pathbuf = try!(dev.path().ok_or(io::Error::new(
-            ErrorKind::NotFound,
-            format!("Could not get path for {}:{}", dev.major, dev.minor))));
-
-
-        let pstat = match stat::stat(&pathbuf) {
+        match stat::stat(path) {
             Err(_) => return Err(io::Error::new(
                 ErrorKind::NotFound,
-                format!("{} not found", &pathbuf.display()))),
+                format!("{} not found", path.display()))),
+            Ok(x) => x,
+        };
+
+        let mut f = match OpenOptions::new().read(true).open(path) {
+            Err(_) => {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    format!("Could not open {}", path.display())));
+            },
+            Ok(x) => x,
+        };
+
+        let mut buf = [0u8; FRO_HEADER_SIZE];
+        try!(f.read(&mut buf));
+
+        if &buf[4..20] != FRO_MAGIC {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} is not a Froyo device", path.display())));
+        }
+
+        let crc = crc32::checksum_ieee(&buf[4..FRO_HEADER_SIZE]);
+        if crc != LittleEndian::read_u32(&mut buf[..4]) {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} Froyo header CRC failed", path.display())));
+        }
+
+        Ok(FroyoDev {dev: dev, path: path.to_owned()})
+    }
+
+    fn initialize(path: &Path, force: bool) -> io::Result<FroyoDev> {
+        let pstat = match stat::stat(path) {
+            Err(_) => return Err(io::Error::new(
+                ErrorKind::NotFound,
+                format!("{} not found", path.display()))),
             Ok(x) => x,
         };
 
         if pstat.st_mode & 0x6000 != 0x6000 {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} is not a block device", &pathbuf.display())));
+                format!("{} is not a block device", path.display())));
         }
 
-        let mut f = match OpenOptions::new().read(true).write(true).open(&pathbuf) {
+        let mut f = match OpenOptions::new().read(true).write(true).open(path) {
             Err(_) => {
                 return Err(io::Error::new(
                     ErrorKind::PermissionDenied,
-                    format!("Could not open {}", &pathbuf.display())));
+                    format!("Could not open {}", path.display())));
             },
             Ok(x) => x,
         };
@@ -166,7 +200,7 @@ impl FroyoDev {
                 return Err(io::Error::new(
                     ErrorKind::InvalidInput,
                     format!("First 4K of {} is not zeroed, need to use --force",
-                            &pathbuf.display())));
+                            path.display())));
             }
         }
 
@@ -174,7 +208,7 @@ impl FroyoDev {
         if dev_size < MIN_DEV_SIZE as u64 {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} too small, 1G minimum", &pathbuf.display())));
+                format!("{} too small, 1G minimum", path.display())));
         }
 
         let mut buf = [0u8; FRO_MDA_ZONE_SIZE];
@@ -196,18 +230,30 @@ impl FroyoDev {
 
         try!(f.flush());
 
-        Ok(FroyoDev {dev: dev})
+        let dev = match Device::from_str(&path.to_string_lossy()) {
+            Ok(x) => x,
+            Err(_) => return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} is not a block device", path.display())))
+        };
+
+        Ok(FroyoDev {dev: dev, path: path.to_owned()})
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct Froyo {
     name: String,
     devs: Vec<FroyoDev>,
 }
 
 impl Froyo {
-    fn create(name: &str, fds: Vec<FroyoDev>) -> io::Result<Froyo> {
+    fn create(name: &str, fds: Vec<FroyoDev>) -> Result<Froyo, FroyoError> {
+
+        let dm = try!(DM::new());
+
+        try!(dm.device_create(&format!("froyo-{}", 1), None, DmFlags::empty()));
+
         Ok(Froyo {
             name: name.to_string(),
             devs: fds,
@@ -215,22 +261,22 @@ impl Froyo {
     }
 }
 
-fn list(args: &ArgMatches) -> Result<(), FroyoError> {
+fn list(_args: &ArgMatches) -> Result<(), FroyoError> {
     println!("hello from list()");
     Ok(())
 }
 
-fn status(args: &ArgMatches) -> Result<(), FroyoError> {
+fn status(_args: &ArgMatches) -> Result<(), FroyoError> {
     println!("hello from status()");
     Ok(())
 }
 
-fn add(args: &ArgMatches) -> Result<(), FroyoError> {
+fn add(_args: &ArgMatches) -> Result<(), FroyoError> {
     println!("hello from add()");
     Ok(())
 }
 
-fn remove(args: &ArgMatches) -> Result<(), FroyoError> {
+fn remove(_args: &ArgMatches) -> Result<(), FroyoError> {
     println!("hello from remove()");
     Ok(())
 }
@@ -246,17 +292,21 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
             }})
         .collect();
 
-    let mut fds = Vec::new();
-    for path in dev_paths {
-        let dev = match Device::from_str(&path.to_string_lossy()) {
-            Ok(x) => x,
-            Err(_) => return Err(FroyoError::Io(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("{} is not a block device", path.display()))))
-        };
+    if dev_paths.len() < 2 {
+        return Err(FroyoError::Io(io::Error::new(
+            ErrorKind::InvalidInput, "At least 2 block devices must be given")))
+    }
 
-        dbgp!("Initializing {}", &path.display());
-        let fd = try!(FroyoDev::initialize(dev, args.is_present("force")));
+    if dev_paths.len() > 8 {
+        return Err(FroyoError::Io(io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("Max supported devices is 8, {} given", dev_paths.len()))))
+    }
+
+    let mut fds = Vec::new();
+    for pathbuf in dev_paths {
+        dbgp!("Initializing {}", &pathbuf.display());
+        let fd = try!(FroyoDev::initialize(&pathbuf, args.is_present("force")));
         fds.push(fd);
     }
 
@@ -264,6 +314,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
     let froyo = try!(Froyo::create(name, fds));
 
     dbgp!("Created {}", name);
+    println!("sss {}", try!(serde_json::to_string(&froyo)));
 
     Ok(())
 }
