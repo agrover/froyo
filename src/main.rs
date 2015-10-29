@@ -38,6 +38,7 @@ use uuid::Uuid;
 const SECTOR_SIZE: usize = 512;
 const FRO_HEADER_SIZE: usize = 512;
 const FRO_MDA_ZONE_SIZE: usize = (1024 * 1024);
+const FRO_MDA_ZONE_SECTORS: usize = (FRO_MDA_ZONE_SIZE / SECTOR_SIZE);
 const FRO_MAGIC: &'static [u8] = b"!IamFroy0\x86\xffGO\x02^\x41";
 
 // No devs smaller than a gig
@@ -123,6 +124,7 @@ fn blkdev_size(file: &File) -> io::Result<u64> {
 struct FroyoDev {
     dev: Device,
     path: PathBuf,
+    sector_count: usize,
 }
 
 impl FroyoDev {
@@ -166,7 +168,9 @@ impl FroyoDev {
                 format!("{} Froyo header CRC failed", path.display())));
         }
 
-        Ok(FroyoDev {dev: dev, path: path.to_owned()})
+        let sector_count = try!(blkdev_size(&f)) as usize / SECTOR_SIZE;
+
+        Ok(FroyoDev {dev: dev, path: path.to_owned(), sector_count: sector_count})
     }
 
     fn initialize(path: &Path, force: bool) -> io::Result<FroyoDev> {
@@ -237,7 +241,10 @@ impl FroyoDev {
                 format!("{} is not a block device", path.display())))
         };
 
-        Ok(FroyoDev {dev: dev, path: path.to_owned()})
+        Ok(FroyoDev {
+            dev: dev,
+            path: path.to_owned(),
+            sector_count: dev_size as usize / SECTOR_SIZE})
     }
 }
 
@@ -251,8 +258,53 @@ impl Froyo {
     fn create(name: &str, fds: Vec<FroyoDev>) -> Result<Froyo, FroyoError> {
 
         let dm = try!(DM::new());
+        let mut num = 0;
 
-        try!(dm.device_create(&format!("froyo-{}", 1), None, DmFlags::empty()));
+        // TODO: Make sure name has only chars we can use in a DM name
+
+        //try!(dm.device_create(&format!("froyo-{}", 1), None, DmFlags::empty()));
+
+        // Create metadata and data devices for raid from each dev
+        for fd in &fds {
+            let mdata_sector_start = FRO_MDA_ZONE_SECTORS;
+            let mdata_sector_len = 8; // 4KiB
+            let data_sector_start = mdata_sector_start + mdata_sector_len;
+            // subtract start zone, mdata, and end zone
+            let data_sector_len = fd.sector_count - data_sector_start - FRO_MDA_ZONE_SECTORS;
+
+            let params = format!("{}:{} {}",
+                                 fd.dev.major, fd.dev.minor, mdata_sector_start);
+            let mdata_table = (0u64, mdata_sector_len as u64, "linear", params.as_ref());
+            println!("mdata table {:?}", mdata_table);
+
+            let dm_name = format!("froyo-base-mdata-{}-{}", name, num);
+
+            try!(dm.device_create(&dm_name, None, DmFlags::empty()));
+            let di = try!(dm.table_load(&dm_name, &vec![mdata_table]));
+            try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+            println!("created {}:{}", di.device().major, di.device().minor);
+
+            let params = format!("{}:{} {}",
+                                 fd.dev.major, fd.dev.minor, data_sector_start);
+            let data_table = (0u64, data_sector_len as u64, "linear", &params[..]);
+            println!("data table {:?}", data_table);
+
+            let dm_name = format!("froyo-base-data-{}-{}", name, num);
+
+            try!(dm.device_create(&dm_name, None, DmFlags::empty()));
+            let di = try!(dm.table_load(&dm_name, &vec![data_table]));
+            try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+            num += 1;
+        }
+
+        // TODO create raid based on minimum size of all constituent devs
+
+        // let raid_devs: Vec<_> = fds.iter()
+        //     .map(|fd| format!("- {}:{}", fd.dev.major, fd.dev.minor))
+        //     .collect();
+
+//        let table = format!("raid raid5_la 1 2048 {} {}", raid_devs.len(), raid_devs.join(" "));
+//        println!("TABLE: {}", table);
 
         Ok(Froyo {
             name: name.to_string(),
