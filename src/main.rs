@@ -265,7 +265,8 @@ impl Froyo {
         //try!(dm.device_create(&format!("froyo-{}", 1), None, DmFlags::empty()));
 
         // Create metadata and data devices for raid from each dev
-        for fd in &fds {
+        let mut layer1_devices = Vec::new();
+        for (num, fd) in fds.iter().enumerate() {
             let mdata_sector_start = FRO_MDA_ZONE_SECTORS;
             let mdata_sector_len = 8; // 4KiB
             let data_sector_start = mdata_sector_start + mdata_sector_len;
@@ -275,36 +276,44 @@ impl Froyo {
             let params = format!("{}:{} {}",
                                  fd.dev.major, fd.dev.minor, mdata_sector_start);
             let mdata_table = (0u64, mdata_sector_len as u64, "linear", params.as_ref());
-            println!("mdata table {:?}", mdata_table);
 
             let dm_name = format!("froyo-base-mdata-{}-{}", name, num);
 
             try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-            let di = try!(dm.table_load(&dm_name, &vec![mdata_table]));
+            let mdata_di = try!(dm.table_load(&dm_name, &vec![mdata_table]));
             try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-            println!("created {}:{}", di.device().major, di.device().minor);
 
             let params = format!("{}:{} {}",
                                  fd.dev.major, fd.dev.minor, data_sector_start);
             let data_table = (0u64, data_sector_len as u64, "linear", &params[..]);
-            println!("data table {:?}", data_table);
 
             let dm_name = format!("froyo-base-data-{}-{}", name, num);
 
             try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-            let di = try!(dm.table_load(&dm_name, &vec![data_table]));
+            let data_di = try!(dm.table_load(&dm_name, &vec![data_table]));
             try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-            num += 1;
+
+            layer1_devices.push((mdata_di.device(), data_di.device()));
         }
 
         // TODO create raid based on minimum size of all constituent devs
 
-        // let raid_devs: Vec<_> = fds.iter()
-        //     .map(|fd| format!("- {}:{}", fd.dev.major, fd.dev.minor))
-        //     .collect();
+        let raid_devs: Vec<_> = layer1_devices.iter()
+            .map(|&(mdata, data)| format!("{}:{} {}:{}",
+                                         mdata.major, mdata.minor,
+                                         data.major, data.minor))
+            .collect();
 
-//        let table = format!("raid raid5_la 1 2048 {} {}", raid_devs.len(), raid_devs.join(" "));
-//        println!("TABLE: {}", table);
+        let params = format!("raid5_la 1 2048 {} {}",
+                            raid_devs.len(), raid_devs.join(" "));
+        let raid_table = (0u64, 4096000u64, "raid", &params[..]);
+        println!("TABLE: {:?}", raid_table);
+
+        let dm_name = format!("froyo-raid5-{}-{}", name, 0);
+
+        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
+        let raid_di = try!(dm.table_load(&dm_name, &vec![raid_table]));
+        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
         Ok(Froyo {
             name: name.to_string(),
