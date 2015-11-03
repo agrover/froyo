@@ -23,7 +23,7 @@ use std::error::Error;
 use std::process::exit;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::str::{FromStr, from_utf8};
 use std::slice::bytes::copy_memory;
 use std::os::unix::prelude::AsRawFd;
 use std::fmt;
@@ -36,13 +36,21 @@ use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
 
 const SECTOR_SIZE: usize = 512;
-const FRO_HEADER_SIZE: usize = 512;
-const FRO_MDA_ZONE_SIZE: usize = (1024 * 1024);
-const FRO_MDA_ZONE_SECTORS: usize = (FRO_MDA_ZONE_SIZE / SECTOR_SIZE);
+const HEADER_SIZE: usize = 512;
+const MDA_ZONE_SIZE: usize = (1024 * 1024);
+const MDA_ZONE_SECTORS: usize = (MDA_ZONE_SIZE / SECTOR_SIZE);
 const FRO_MAGIC: &'static [u8] = b"!IamFroy0\x86\xffGO\x02^\x41";
+const STRIPE_SECTORS: usize = 2048;
 
-// No devs smaller than a gig
-const MIN_DEV_SIZE: usize = (1024 * 1024 * 1024);
+// No devs smaller than around a gig
+const MIN_DATA_ZONE_SIZE: usize = (1024 * 1024 * 1024);
+const MIN_DATA_ZONE_SECTORS: usize = MIN_DATA_ZONE_SIZE / SECTOR_SIZE;
+const MIN_DEV_SIZE: usize = MIN_DATA_ZONE_SIZE + (2 * MDA_ZONE_SIZE);
+const MIN_DEV_SECTORS: usize = MIN_DEV_SIZE / SECTOR_SIZE;
+
+const MAX_REGIONS: usize = (2 * 1024 * 1024);
+const DEFAULT_REGION_SIZE: usize = (4 * 1024 * 1024);
+const DEFAULT_REGION_SECTORS: usize = DEFAULT_REGION_SIZE / SECTOR_SIZE;
 
 static mut debug: bool = false;
 
@@ -61,6 +69,12 @@ macro_rules! errp {
             Ok(_) => {},
             Err(x) => panic!("Unable to write to stderr: {}", x),
         })
+}
+
+fn align_to(num: usize, align_to: usize) -> usize {
+    let agn = align_to - 1;
+
+    (num + agn) & !agn
 }
 
 // Define a common error enum.
@@ -121,14 +135,15 @@ fn blkdev_size(file: &File) -> io::Result<u64> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct FroyoDev {
+pub struct FroyoDev {
+    id: String,
     dev: Device,
     path: PathBuf,
     sector_count: usize,
 }
 
 impl FroyoDev {
-    fn new(path: &Path) -> io::Result<FroyoDev> {
+    pub fn new(path: &Path) -> io::Result<FroyoDev> {
         let dev = match Device::from_str(&path.to_string_lossy()) {
             Ok(x) => x,
             Err(_) => return Err(io::Error::new(
@@ -152,7 +167,7 @@ impl FroyoDev {
             Ok(x) => x,
         };
 
-        let mut buf = [0u8; FRO_HEADER_SIZE];
+        let mut buf = [0u8; HEADER_SIZE];
         try!(f.read(&mut buf));
 
         if &buf[4..20] != FRO_MAGIC {
@@ -161,7 +176,7 @@ impl FroyoDev {
                 format!("{} is not a Froyo device", path.display())));
         }
 
-        let crc = crc32::checksum_ieee(&buf[4..FRO_HEADER_SIZE]);
+        let crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE]);
         if crc != LittleEndian::read_u32(&mut buf[..4]) {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
@@ -170,7 +185,9 @@ impl FroyoDev {
 
         let sector_count = try!(blkdev_size(&f)) as usize / SECTOR_SIZE;
 
-        Ok(FroyoDev {dev: dev, path: path.to_owned(), sector_count: sector_count})
+        let id = from_utf8(&buf[32..64]).unwrap();
+
+        Ok(FroyoDev {id: id.to_owned(), dev: dev, path: path.to_owned(), sector_count: sector_count})
     }
 
     fn initialize(path: &Path, force: bool) -> io::Result<FroyoDev> {
@@ -215,21 +232,22 @@ impl FroyoDev {
                 format!("{} too small, 1G minimum", path.display())));
         }
 
-        let mut buf = [0u8; FRO_MDA_ZONE_SIZE];
+        let mut buf = [0u8; MDA_ZONE_SIZE];
 
         copy_memory(FRO_MAGIC, &mut buf[4..20]);
         LittleEndian::write_u64(&mut buf[20..28], dev_size / SECTOR_SIZE as u64);
         // no flags
-        copy_memory(Uuid::new_v4().to_simple_string().as_bytes(), &mut buf[32..64]);
+        let id = Uuid::new_v4().to_simple_string();
+        copy_memory(id.as_bytes(), &mut buf[32..64]);
         // no MDAs in use yet
 
         // All done, calc CRC and write
-        let crc = crc32::checksum_ieee(&buf[4..FRO_HEADER_SIZE]);
+        let crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE]);
         LittleEndian::write_u32(&mut buf[..4], crc);
 
         try!(f.seek(SeekFrom::Start(0)));
         try!(f.write_all(&buf));
-        try!(f.seek(SeekFrom::End(-(FRO_MDA_ZONE_SIZE as i64))));
+        try!(f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64))));
         try!(f.write_all(&buf));
 
         try!(f.flush());
@@ -242,6 +260,7 @@ impl FroyoDev {
         };
 
         Ok(FroyoDev {
+            id: id,
             dev: dev,
             path: path.to_owned(),
             sector_count: dev_size as usize / SECTOR_SIZE})
@@ -258,24 +277,52 @@ impl Froyo {
     fn create(name: &str, fds: Vec<FroyoDev>) -> Result<Froyo, FroyoError> {
 
         let dm = try!(DM::new());
-        let mut num = 0;
 
         // TODO: Make sure name has only chars we can use in a DM name
+        // TODO: filter devs based on minimum free space
 
-        //try!(dm.device_create(&format!("froyo-{}", 1), None, DmFlags::empty()));
+        // get common data area size, allowing for Froyo data at start and end
+        let common_free_sectors = fds.iter()
+            .map(|fd| fd.sector_count - (2 * MDA_ZONE_SECTORS))
+            .min()
+            .expect("should never happen");
+
+        let (region_count, region_sectors) = {
+            let mut region_sectors = DEFAULT_REGION_SECTORS;
+            while common_free_sectors / region_sectors > MAX_REGIONS {
+                region_sectors *= 2;
+            }
+
+            let partial_region = match common_free_sectors % region_sectors == 0 {
+                true => 0,
+                false => 1,
+            };
+
+            (common_free_sectors / region_sectors + partial_region, region_sectors)
+        };
+
+        let mdata_sector_start = MDA_ZONE_SECTORS;
+        // each region needs 1 bit in the write intent bitmap
+        let mdata_sectors = align_to(8192 + (region_count / 8), SECTOR_SIZE)
+            .next_power_of_two()
+            / SECTOR_SIZE;
+        let data_sector_start = mdata_sector_start + mdata_sectors;
+        // data size must be multiple of stripe size
+        let data_sectors = (common_free_sectors - mdata_sectors) & !(STRIPE_SECTORS-1);
+
+        println!("STUFF {} {} {} {} {}",
+                 common_free_sectors,
+                 mdata_sector_start,
+                 mdata_sectors,
+                 data_sector_start,
+                 data_sectors);
 
         // Create metadata and data devices for raid from each dev
         let mut layer1_devices = Vec::new();
         for (num, fd) in fds.iter().enumerate() {
-            let mdata_sector_start = FRO_MDA_ZONE_SECTORS;
-            let mdata_sector_len = 8; // 4KiB
-            let data_sector_start = mdata_sector_start + mdata_sector_len;
-            // subtract start zone, mdata, and end zone
-            let data_sector_len = fd.sector_count - data_sector_start - FRO_MDA_ZONE_SECTORS;
-
             let params = format!("{}:{} {}",
                                  fd.dev.major, fd.dev.minor, mdata_sector_start);
-            let mdata_table = (0u64, mdata_sector_len as u64, "linear", params.as_ref());
+            let mdata_table = (0u64, mdata_sectors as u64, "linear", params.as_ref());
 
             let dm_name = format!("froyo-base-mdata-{}-{}", name, num);
 
@@ -285,7 +332,7 @@ impl Froyo {
 
             let params = format!("{}:{} {}",
                                  fd.dev.major, fd.dev.minor, data_sector_start);
-            let data_table = (0u64, data_sector_len as u64, "linear", &params[..]);
+            let data_table = (0u64, data_sectors as u64, "linear", &params[..]);
 
             let dm_name = format!("froyo-base-data-{}-{}", name, num);
 
@@ -304,9 +351,13 @@ impl Froyo {
                                          data.major, data.minor))
             .collect();
 
-        let params = format!("raid5_la 1 2048 {} {}",
-                            raid_devs.len(), raid_devs.join(" "));
-        let raid_table = (0u64, 4096000u64, "raid", &params[..]);
+        let target_length: u64 = data_sectors as u64 * (raid_devs.len() as u64 - 1);
+        let params = format!("raid5_ls 3 {} region_size {} {} {}",
+                             STRIPE_SECTORS,
+                             region_sectors,
+                             raid_devs.len(),
+                             raid_devs.join(" "));
+        let raid_table = (0u64, target_length, "raid", &params[..]);
         println!("TABLE: {:?}", raid_table);
 
         let dm_name = format!("froyo-raid5-{}-{}", name, 0);
