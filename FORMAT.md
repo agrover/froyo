@@ -1,4 +1,4 @@
-On-disk format for Froyo
+## On-disk format for Froyo
 
 Froyo takes 1MiB (2048 512-byte sectors) from the start and end of each
 base block device for its configuration.
@@ -57,3 +57,63 @@ Third, the sig block's CRC32 is calculated.
 
 Finally, the updated sig block is written to the start and end zones,
 in that order. Now would be a good time for a flush/FUA.
+
+### JSON Metadata
+
+Froyo is implemented using layers of devicemapper devices:
+
+|Layer  |Description
+|-------|-----------
+|0      | Block devices given to Froyo to use
+|1      | linear targets that divide blockdev into one or more pairs of raid meta and data devices
+|2      | raid5 targets that build redundant storage on top of layer 1
+|3      | two linear targets for thin-meta and thin-data, and the thin-pool that uses them (actually two layers)
+|4      | Thin volumes allocated out of the thin pool
+
+Additional target layers may be used, but info on these layers is sufficient to configure the Froyodev for use.
+
+##### example json
+
+```json
+{
+"name": "foo",
+"l0_devs" : [
+  {"id":"asdasd",
+	    "major":322,
+	    "minor":12},
+	{"id":"3de56",
+	    "major":322,
+	    "minor":45},
+	{"id":"f00f1234",
+	    "major":4,
+	    "minor":22}],
+"l1_devs" : [
+  {"name": "qweqwe",
+   "from": "asdasd",
+	 "raid_meta":[{"offset":213,
+	 "length":16}],
+	 "raid_data":[{"offset":400,
+	 "length":9000}]}],
+"l2_devs": [{"name":"ertert",
+	"region_size": 8192,
+	"stripe_size": 2048,
+	"type": "raid5_ls",
+	"from":["qweqwe", "2nd disk", "etc"]}],
+"l3_dev": {
+  "meta":[
+     {"from":"ertert",
+	    "offset":0,
+	    "len":200}],
+	"data":[
+	   {"from":"ertert",
+	    "offset":200,
+	    "len":1000}],
+	 "block_size":8192},
+"l4_devs": [
+    {"name":"5d3e2",
+	  "thin_id":0,
+	  "fs":"xfs",
+	  "size":123123141241241}]
+}
+
+```
