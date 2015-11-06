@@ -21,7 +21,7 @@ use std::io;
 use std::io::{Read, Write, ErrorKind, Seek, SeekFrom};
 use std::error::Error;
 use std::process::exit;
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, read_dir};
 use std::path::{Path, PathBuf};
 use std::str::{FromStr, from_utf8};
 use std::slice::bytes::copy_memory;
@@ -414,6 +414,22 @@ impl Froyo {
             raid_devs: Vec::new(),
         }
     }
+
+    fn find_all() -> io::Result<Vec<Froyo>> {
+        let froyo_bdevs = try!(read_dir("/dev"))
+            .into_iter()
+            .filter_map(|dir_e| if dir_e.is_ok()
+                        { Some(dir_e.unwrap().path()) } else {None} )
+            .filter(|path| {
+                (stat::stat(path).unwrap().st_mode & 0x6000) == 0x6000 }) // S_IFBLK
+            .filter_map(|path| { BlockDev::new(&path).ok() })
+            .collect::<Vec<_>>();
+
+        // TODO: build froyodevs out of collected blockdevs.
+
+        Ok(vec![Froyo::new("ss")])
+    }
+
 
     // Try to make an as-large-as-possible redundant device from the
     // given block devices.
