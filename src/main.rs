@@ -282,19 +282,19 @@ impl BlockDev {
     }
 
     fn used_areas(&self) -> Vec<(u64, u64)> {
-        let mut v = Vec::new();
+        let mut used = Vec::new();
 
         // Flag start and end mda zones as used
-        v.push((0, MDA_ZONE_SECTORS));
-        v.push((self.sectors - MDA_ZONE_SECTORS, MDA_ZONE_SECTORS));
+        used.push((0, MDA_ZONE_SECTORS));
+        used.push((self.sectors - MDA_ZONE_SECTORS, MDA_ZONE_SECTORS));
 
         for dev in &self.linear_devs {
             let dev = dev.borrow();
-            v.push((dev.start, dev.length))
+            used.push((dev.start, dev.length))
         }
-        v.sort();
+        used.sort();
 
-        v
+        used
     }
 
     fn free_areas(&self) -> Vec<(u64, u64)> {
