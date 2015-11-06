@@ -355,7 +355,7 @@ pub struct RaidDev {
     dev: Device,
     stripe_sectors: u64,
     region_sectors: u64,
-    members: Vec<()>,
+    members: Vec<(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)>,
 }
 
 impl RaidDev {
@@ -389,7 +389,7 @@ impl RaidDev {
             dev: raid_di.device(),
             stripe_sectors: stripe,
             region_sectors: region,
-            members: Vec::new(),
+            members: devs.to_vec(),
         })
 
     }
