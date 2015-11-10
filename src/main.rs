@@ -2,8 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#![feature(slice_bytes, custom_derive, plugin, iter_cmp, iter_arith)]
-#![plugin(serde_macros)]
+//#![feature(slice_bytes, custom_derive, plugin, iter_cmp, iter_arith)]
+#![feature(slice_bytes, iter_cmp, iter_arith)]
+//#![plugin(serde_macros)]
 
 extern crate devicemapper;
 #[macro_use]
@@ -13,8 +14,8 @@ extern crate crc;
 extern crate byteorder;
 extern crate uuid;
 extern crate time;
-extern crate serde;
-extern crate serde_json;
+//extern crate serde;
+//extern crate serde_json;
 
 #[allow(unused_imports)]
 use std::io;
@@ -88,14 +89,14 @@ fn align_to(num: u64, align_to: u64) -> u64 {
 #[derive(Debug)]
 enum FroyoError {
     Io(io::Error),
-    Serde(serde_json::error::Error),
+//    Serde(serde_json::error::Error),
 }
 
 impl fmt::Display for FroyoError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             FroyoError::Io(ref err) => write!(f, "IO error: {}", err),
-            FroyoError::Serde(ref err) => write!(f, "Serde error: {}", err),
+//            FroyoError::Serde(ref err) => write!(f, "Serde error: {}", err),
         }
     }
 }
@@ -104,14 +105,14 @@ impl Error for FroyoError {
     fn description(&self) -> &str {
         match *self {
             FroyoError::Io(ref err) => err.description(),
-            FroyoError::Serde(ref err) => Error::description(err),
+//            FroyoError::Serde(ref err) => Error::description(err),
         }
     }
 
     fn cause(&self) -> Option<&Error> {
         match *self {
             FroyoError::Io(ref err) => Some(err),
-            FroyoError::Serde(ref err) => Some(err),
+//            FroyoError::Serde(ref err) => Some(err),
         }
     }
 }
@@ -122,11 +123,11 @@ impl From<io::Error> for FroyoError {
     }
 }
 
-impl From<serde_json::error::Error> for FroyoError {
-    fn from(err: serde_json::error::Error) -> FroyoError {
-        FroyoError::Serde(err)
-    }
-}
+// impl From<serde_json::error::Error> for FroyoError {
+//     fn from(err: serde_json::error::Error) -> FroyoError {
+//         FroyoError::Serde(err)
+//     }
+// }
 
 
 fn blkdev_size(file: &File) -> io::Result<u64> {
