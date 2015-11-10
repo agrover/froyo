@@ -356,6 +356,7 @@ pub struct RaidDev {
     dev: Device,
     stripe_sectors: u64,
     region_sectors: u64,
+    length: Sectors,
     members: Vec<(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)>,
 }
 
@@ -390,6 +391,7 @@ impl RaidDev {
             dev: raid_di.device(),
             stripe_sectors: stripe,
             region_sectors: region,
+            length: target_length,
             members: devs.to_vec(),
         })
 
@@ -398,11 +400,107 @@ impl RaidDev {
 }
 
 #[derive(Debug)]
+struct ThinPoolDev {
+    dm_name: String,
+    dev: Device,
+    meta_dev: Device,
+    data_dev: Device,
+}
+
+impl ThinPoolDev {
+    fn create(dm: &DM, name: &str, devs: &[Rc<RefCell<RaidDev>>])
+              -> io::Result<ThinPoolDev> {
+        // FIXME: Create metadata on 0th raid, data on 1st raid
+
+        let raiddev_0 = devs[0].borrow_mut();
+        let raiddev_1 = devs[1].borrow_mut();
+        let start = 0;
+
+
+        let params = format!("{}:{} {}",
+                             raiddev_0.dev.major, raiddev_0.dev.minor, start);
+        let table = (0u64, 8192, "linear", params.as_ref());
+
+        let dm_name = format!("froyo-linear-thin-meta-{}", name);
+
+        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
+        let meta_di = try!(dm.table_load(&dm_name, &vec![table]));
+        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+
+
+        let data_sectors = 1024 * 1024;
+        let params = format!("{}:{} {}",
+                             raiddev_1.dev.major, raiddev_1.dev.minor, start);
+        let table = (0u64, data_sectors, "linear", params.as_ref());
+
+        let dm_name = format!("froyo-linear-thin-data-{}", name);
+
+        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
+        let data_di = try!(dm.table_load(&dm_name, &vec![table]));
+        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+
+        let data_block_sectors = 2048; // 1MiB
+        let low_water_sectors = 2048 * 512; // 512MiB
+        let params = format!("{}:{} {}:{} {} {}",
+                             meta_di.device().major, meta_di.device().minor,
+                             data_di.device().major, data_di.device().minor,
+                             data_block_sectors, low_water_sectors);
+        let table = (0u64, data_sectors, "thin-pool", params.as_ref());
+
+        let dm_name = format!("froyo-thin-pool-{}", name);
+
+        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
+        let pool_di = try!(dm.table_load(&dm_name, &vec![table]));
+        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+
+
+        Ok(ThinPoolDev {
+            dm_name: dm_name,
+            dev: pool_di.device(),
+            meta_dev: meta_di.device(),
+            data_dev: data_di.device(),
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ThinDev {
+    dev: Device,
+    thin_number: u64,
+}
+
+impl ThinDev {
+    fn create(dm: &DM, name: &str, pool_dev: &ThinPoolDev) -> io::Result<ThinDev> {
+        let thin_number = 666;
+        let thin_vol_sectors = 1024 * 1024 * 1024 * 1024 / SECTOR_SIZE;
+
+        let (di, _) = try!(dm.target_msg(&pool_dev.dm_name, 0,
+                                         &format!("create_thin {}", thin_number)));
+
+        let params = format!("{}:{} {}", pool_dev.dev.major, pool_dev.dev.minor, thin_number);
+        let table = (0u64, thin_vol_sectors, "thin", params.as_ref());
+
+        let dm_name = format!("froyo-thin-{}-{}", name, thin_number);
+
+        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
+        let thin_di = try!(dm.table_load(&dm_name, &vec![table]));
+        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+
+        Ok(ThinDev {
+            dev: thin_di.device(),
+            thin_number: thin_number,
+        })
+    }
+}
+
+#[derive(Debug)]
 pub struct Froyo {
     name: String,
     block_devs: Vec<Rc<RefCell<BlockDev>>>,
     linear_devs: Vec<Rc<RefCell<LinearDev>>>,
     raid_devs: Vec<Rc<RefCell<RaidDev>>>,
+    thin_pool_dev: Option<ThinPoolDev>,
+    thin_dev: Option<ThinDev>,
 }
 
 impl Froyo {
@@ -413,6 +511,8 @@ impl Froyo {
             block_devs: Vec::new(),
             linear_devs: Vec::new(),
             raid_devs: Vec::new(),
+            thin_pool_dev: None,
+            thin_dev: None,
         }
     }
 
@@ -591,8 +691,16 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
 
     try!(froyo.create_redundant_zones());
 
+    let dm = try!(DM::new());
+
+    let thin_pool_dev = try!(ThinPoolDev::create(&dm, name, &froyo.raid_devs));
+    let thin_dev = try!(ThinDev::create(&dm, name, &thin_pool_dev));
     dbgp!("Created {}", name);
-    // println!("sss {}", try!(serde_json::to_string(&froyo)));
+    froyo.thin_pool_dev = Some(thin_pool_dev);
+    froyo.thin_dev = Some(thin_dev);
+
+    // TODO: write metadata to all disks
+    //    println!("sss {}", try!(serde_json::to_string(&froyo)));
 
     Ok(())
 }
