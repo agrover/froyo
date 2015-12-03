@@ -512,7 +512,7 @@ impl ThinPoolDev {
 #[derive(Debug)]
 struct ThinDev {
     dev: Device,
-    thin_number: u64,
+    thin_number: u32,
 }
 
 impl ThinDev {
