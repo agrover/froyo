@@ -3,7 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //#![feature(slice_bytes, custom_derive, plugin, iter_cmp, iter_arith)]
-#![feature(slice_bytes, iter_cmp, iter_arith)]
+#![feature(slice_bytes, iter_cmp, iter_arith, zero_one)]
 //#![plugin(serde_macros)]
 
 extern crate devicemapper;
@@ -16,6 +16,9 @@ extern crate uuid;
 extern crate time;
 //extern crate serde;
 //extern crate serde_json;
+
+#[macro_use] extern crate custom_derive;
+#[macro_use] extern crate newtype_derive;
 
 #[allow(unused_imports)]
 use std::io;
@@ -31,6 +34,8 @@ use std::fmt;
 //use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::cmp::Ordering;
+use std::num::Zero;
 
 use devicemapper::{DM, Device, DmFlags};
 use clap::{App, Arg, SubCommand, ArgMatches};
@@ -39,25 +44,65 @@ use crc::crc32;
 use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
 
-type Sectors = u64;
-type SectorOffset = u64;
+//
+// Use distinct 'newtype' types for sectors and sector offsets for type safety.
+// When needed, these can still be derefed to u64.
+// Derive a bunch of stuff so we can do ops on them.
+//
+custom_derive! {
+    #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
+             NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
+             Debug, Clone, Copy, Eq, PartialEq, PartialOrd)]
+    pub struct Sectors(u64);
+}
+
+impl Ord for Sectors {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(other)
+    }
+}
+
+impl Zero for Sectors {
+    fn zero() -> Self {
+        Sectors(0)
+    }
+}
+
+custom_derive! {
+    #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
+             NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
+             Debug, Clone, Copy, Eq, PartialEq, PartialOrd)]
+    pub struct SectorOffset(u64);
+}
+
+impl Ord for SectorOffset {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(other)
+    }
+}
+
+impl Zero for SectorOffset {
+    fn zero() -> Self {
+        SectorOffset(0)
+    }
+}
 
 const SECTOR_SIZE: u64 = 512;
 const HEADER_SIZE: u64 = 512;
 const MDA_ZONE_SIZE: u64 = (1024 * 1024);
-const MDA_ZONE_SECTORS: Sectors = (MDA_ZONE_SIZE / SECTOR_SIZE);
+const MDA_ZONE_SECTORS: Sectors = Sectors(MDA_ZONE_SIZE / SECTOR_SIZE);
 const FRO_MAGIC: &'static [u8] = b"!IamFroy0\x86\xffGO\x02^\x41";
-const STRIPE_SECTORS: u64 = 2048;
+const STRIPE_SECTORS: Sectors = Sectors(2048);
 
 // No devs smaller than around a gig
 const MIN_DATA_ZONE_SIZE: u64 = (1024 * 1024 * 1024);
-const MIN_DATA_ZONE_SECTORS: u64 = MIN_DATA_ZONE_SIZE / SECTOR_SIZE;
+const MIN_DATA_ZONE_SECTORS: Sectors = Sectors(MIN_DATA_ZONE_SIZE / SECTOR_SIZE);
 const MIN_DEV_SIZE: u64 = MIN_DATA_ZONE_SIZE + (2 * MDA_ZONE_SIZE);
 //const MIN_DEV_SECTORS: u64 = MIN_DEV_SIZE / SECTOR_SIZE;
 
 const MAX_REGIONS: u64 = (2 * 1024 * 1024);
 const DEFAULT_REGION_SIZE: u64 = (4 * 1024 * 1024);
-const DEFAULT_REGION_SECTORS: u64 = DEFAULT_REGION_SIZE / SECTOR_SIZE;
+const DEFAULT_REGION_SECTORS: Sectors = Sectors(DEFAULT_REGION_SIZE / SECTOR_SIZE);
 
 static mut debug: bool = false;
 
@@ -146,7 +191,7 @@ pub struct BlockDev {
     dev: Device,
     id: String,
     path: PathBuf,
-    sectors: u64,
+    sectors: Sectors,
     linear_devs: Vec<Rc<RefCell<LinearDev>>>,
 }
 
@@ -191,7 +236,7 @@ impl BlockDev {
                 format!("{} Froyo header CRC failed", path.display())));
         }
 
-        let sectors = try!(blkdev_size(&f)) / SECTOR_SIZE;
+        let sectors = Sectors(try!(blkdev_size(&f)) / SECTOR_SIZE);
 
         let id = from_utf8(&buf[32..64]).unwrap();
 
@@ -277,17 +322,17 @@ impl BlockDev {
             id: id,
             dev: dev,
             path: path.to_owned(),
-            sectors: dev_size / SECTOR_SIZE,
+            sectors: Sectors(dev_size / SECTOR_SIZE),
             linear_devs: Vec::new(),
         })
     }
 
-    fn used_areas(&self) -> Vec<(u64, u64)> {
+    fn used_areas(&self) -> Vec<(SectorOffset, Sectors)> {
         let mut used = Vec::new();
 
         // Flag start and end mda zones as used
-        used.push((0, MDA_ZONE_SECTORS));
-        used.push((self.sectors - MDA_ZONE_SECTORS, MDA_ZONE_SECTORS));
+        used.push((SectorOffset(0), MDA_ZONE_SECTORS));
+        used.push((SectorOffset(*self.sectors - *MDA_ZONE_SECTORS), MDA_ZONE_SECTORS));
 
         for dev in &self.linear_devs {
             let dev = dev.borrow();
@@ -298,25 +343,25 @@ impl BlockDev {
         used
     }
 
-    fn free_areas(&self) -> Vec<(u64, u64)> {
+    fn free_areas(&self) -> Vec<(SectorOffset, Sectors)> {
         let mut free = Vec::new();
 
         // Insert an entry to mark the end so the fold works correctly
         let mut used = self.used_areas();
-        used.push((self.sectors, 0));
+        used.push((SectorOffset(*self.sectors), Sectors(0)));
 
         used.into_iter()
-            .fold(0, |prev_end, (start, len)| {
+            .fold(SectorOffset(0), |prev_end, (start, len)| {
                 if prev_end < start {
-                    free.push((prev_end, start-prev_end))
+                    free.push((prev_end, Sectors(*start - *prev_end)))
                 }
-                start + len
+                SectorOffset(*start + *len)
             });
 
         free
     }
 
-    fn largest_free_area(&self) -> Option<(u64, u64)> {
+    fn largest_free_area(&self) -> Option<(SectorOffset, Sectors)> {
         self.free_areas().into_iter()
             .max_by(|&(_, len)| len)
     }
@@ -334,13 +379,13 @@ impl LinearDev {
               -> io::Result<LinearDev> {
 
         let params = format!("{}:{} {}",
-                             dev.major, dev.minor, start);
-        let table = (0u64, len, "linear", params.as_ref());
+                             dev.major, dev.minor, *start);
+        let table = (0u64, *len, "linear", params.as_ref());
 
         let dm_name = format!("froyo-linear-{}", name);
 
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let di = try!(dm.table_load(&dm_name, &vec![table]));
+        let di = try!(dm.table_load(&dm_name, &vec![table][..]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
         Ok(LinearDev{
@@ -354,8 +399,8 @@ impl LinearDev {
 #[derive(Debug, Clone)]
 pub struct RaidDev {
     dev: Device,
-    stripe_sectors: u64,
-    region_sectors: u64,
+    stripe_sectors: Sectors,
+    region_sectors: Sectors,
     length: Sectors,
     members: Vec<(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)>,
 }
@@ -370,16 +415,17 @@ impl RaidDev {
                                           data.borrow().dev.major, data.borrow().dev.minor))
             .collect();
 
+        // skip 1 dev to account for parity
         let target_length = devs.iter().skip(1)
             .map(|&(_, ref data)| data.borrow().length)
-            .sum();
+            .sum::<Sectors>();
 
         let params = format!("raid5_ls 3 {} region_size {} {} {}",
-                             stripe,
-                             region,
+                             *stripe,
+                             *region,
                              raid_texts.len(),
                              raid_texts.join(" "));
-        let raid_table = (0u64, target_length, "raid", &params[..]);
+        let raid_table = (0u64, *target_length, "raid", &params[..]);
 
         let dm_name = format!("froyo-raid5-{}", name);
 
@@ -562,31 +608,31 @@ impl Froyo {
 
         let (region_count, region_sectors) = {
             let mut region_sectors = DEFAULT_REGION_SECTORS;
-            while common_free_sectors / region_sectors > MAX_REGIONS {
-                region_sectors *= 2;
+            while *common_free_sectors / *region_sectors > MAX_REGIONS {
+                region_sectors = Sectors(*region_sectors * 2);
             }
 
-            let partial_region = match common_free_sectors % region_sectors == 0 {
-                true => 0,
-                false => 1,
+            let partial_region = match common_free_sectors % region_sectors == Sectors(0) {
+                true => Sectors(0),
+                false => Sectors(1),
             };
 
             (common_free_sectors / region_sectors + partial_region, region_sectors)
         };
 
         // each region needs 1 bit in the write intent bitmap
-        let mdata_sectors = align_to(8192 + (region_count / 8) , SECTOR_SIZE)
-            .next_power_of_two()
-            / SECTOR_SIZE;
+        let mdata_sectors = Sectors(align_to(8192 + (*region_count / 8) , SECTOR_SIZE)
+                                    .next_power_of_two()
+                                    / SECTOR_SIZE);
         // data size must be multiple of stripe size
-        let data_sectors = (common_free_sectors - mdata_sectors) & !(STRIPE_SECTORS-1);
+        let data_sectors = (common_free_sectors - mdata_sectors) & Sectors(!(*STRIPE_SECTORS-1));
 
         let raid_num = self.raid_devs.len();
 
         let mut linear_dev_pairs = Vec::new();
         for (num, &mut(ref mut bd, (sector_start, _))) in bd_areas.iter_mut().enumerate() {
             let mdata_sector_start = sector_start;
-            let data_sector_start = mdata_sector_start + mdata_sectors;
+            let data_sector_start = SectorOffset(*mdata_sector_start + *mdata_sectors);
 
             let meta = Rc::new(RefCell::new(try!(LinearDev::create(
                 &dm,
