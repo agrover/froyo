@@ -375,6 +375,8 @@ impl LinearDev {
         let di = try!(dm.table_load(&dm_name, &vec![table][..]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
+        dbgp!("Created {}", dm_name);
+
         Ok(LinearDev{
             dev: di.device(),
             start: start,
@@ -420,6 +422,8 @@ impl RaidDev {
         let raid_di = try!(dm.table_load(&dm_name, &vec![raid_table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
+        dbgp!("Created {}", dm_name);
+
         Ok(RaidDev {
             dev: raid_di.device(),
             stripe_sectors: stripe,
@@ -460,6 +464,7 @@ impl ThinPoolDev {
         let meta_di = try!(dm.table_load(&dm_name, &vec![table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
+        dbgp!("Created {}", dm_name);
 
         let data_sectors = 1024 * 1024;
         let params = format!("{}:{} {}",
@@ -471,6 +476,8 @@ impl ThinPoolDev {
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
         let data_di = try!(dm.table_load(&dm_name, &vec![table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+
+        dbgp!("Created {}", dm_name);
 
         let data_block_sectors = 2048; // 1MiB
         let low_water_sectors = 2048 * 512; // 512MiB
@@ -486,6 +493,7 @@ impl ThinPoolDev {
         let pool_di = try!(dm.table_load(&dm_name, &vec![table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
+        dbgp!("Created {}", dm_name);
 
         Ok(ThinPoolDev {
             dm_name: dm_name,
@@ -518,6 +526,8 @@ impl ThinDev {
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
         let thin_di = try!(dm.table_load(&dm_name, &vec![table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+
+        dbgp!("Created {}", dm_name);
 
         Ok(ThinDev {
             dev: thin_di.device(),
@@ -728,7 +738,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
 
     let thin_pool_dev = try!(ThinPoolDev::create(&dm, name, &froyo.raid_devs));
     let thin_dev = try!(ThinDev::create(&dm, name, &thin_pool_dev));
-    dbgp!("Created {}", name);
+
     froyo.thin_pool_dev = Some(thin_pool_dev);
     froyo.thin_dev = Some(thin_dev);
 
