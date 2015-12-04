@@ -34,7 +34,6 @@ use std::fmt;
 //use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::cmp::Ordering;
 use std::num::Zero;
 
 use devicemapper::{DM, Device, DmFlags};
@@ -52,14 +51,8 @@ use uuid::Uuid;
 custom_derive! {
     #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
-             Debug, Clone, Copy, Eq, PartialEq, PartialOrd)]
+             Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct Sectors(u64);
-}
-
-impl Ord for Sectors {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.cmp(other)
-    }
 }
 
 impl Zero for Sectors {
@@ -71,14 +64,8 @@ impl Zero for Sectors {
 custom_derive! {
     #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
-             Debug, Clone, Copy, Eq, PartialEq, PartialOrd)]
+             Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct SectorOffset(u64);
-}
-
-impl Ord for SectorOffset {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.cmp(other)
-    }
 }
 
 impl Zero for SectorOffset {
