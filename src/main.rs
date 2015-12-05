@@ -3,8 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //#![feature(slice_bytes, custom_derive, plugin, iter_cmp, iter_arith)]
-#![feature(slice_bytes, iter_cmp, iter_arith, zero_one)]
-//#![plugin(serde_macros)]
+#![feature(slice_bytes, iter_cmp, iter_arith, zero_one, custom_derive, plugin)]
+#![plugin(serde_macros)]
 
 extern crate devicemapper;
 #[macro_use]
@@ -14,8 +14,8 @@ extern crate crc;
 extern crate byteorder;
 extern crate uuid;
 extern crate time;
-//extern crate serde;
-//extern crate serde_json;
+extern crate serde;
+extern crate serde_json;
 
 #[macro_use] extern crate custom_derive;
 #[macro_use] extern crate newtype_derive;
@@ -61,6 +61,14 @@ impl Zero for Sectors {
     }
 }
 
+impl serde::Serialize for Sectors {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: serde::Serializer,
+    {
+        serializer.visit_u64(**self)
+    }
+}
+
 custom_derive! {
     #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
@@ -71,6 +79,14 @@ custom_derive! {
 impl Zero for SectorOffset {
     fn zero() -> Self {
         SectorOffset(0)
+    }
+}
+
+impl serde::Serialize for SectorOffset {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: serde::Serializer,
+    {
+        serializer.visit_u64(**self)
     }
 }
 
@@ -121,14 +137,14 @@ fn align_to(num: u64, align_to: u64) -> u64 {
 #[derive(Debug)]
 enum FroyoError {
     Io(io::Error),
-//    Serde(serde_json::error::Error),
+    Serde(serde_json::error::Error),
 }
 
 impl fmt::Display for FroyoError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             FroyoError::Io(ref err) => write!(f, "IO error: {}", err),
-//            FroyoError::Serde(ref err) => write!(f, "Serde error: {}", err),
+            FroyoError::Serde(ref err) => write!(f, "Serde error: {}", err),
         }
     }
 }
@@ -137,14 +153,14 @@ impl Error for FroyoError {
     fn description(&self) -> &str {
         match *self {
             FroyoError::Io(ref err) => err.description(),
-//            FroyoError::Serde(ref err) => Error::description(err),
+            FroyoError::Serde(ref err) => Error::description(err),
         }
     }
 
     fn cause(&self) -> Option<&Error> {
         match *self {
             FroyoError::Io(ref err) => Some(err),
-//            FroyoError::Serde(ref err) => Some(err),
+            FroyoError::Serde(ref err) => Some(err),
         }
     }
 }
@@ -155,11 +171,11 @@ impl From<io::Error> for FroyoError {
     }
 }
 
-// impl From<serde_json::error::Error> for FroyoError {
-//     fn from(err: serde_json::error::Error) -> FroyoError {
-//         FroyoError::Serde(err)
-//     }
-// }
+impl From<serde_json::error::Error> for FroyoError {
+    fn from(err: serde_json::error::Error) -> FroyoError {
+        FroyoError::Serde(err)
+    }
+}
 
 
 fn blkdev_size(file: &File) -> io::Result<u64> {
@@ -181,6 +197,51 @@ pub struct BlockDev {
     sectors: Sectors,
     linear_devs: Vec<Rc<RefCell<LinearDev>>>,
 }
+
+impl serde::Serialize for BlockDev {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: serde::Serializer
+    {
+        serializer.visit_struct("BlockDev", BlockDevVisitor {
+            value: self,
+            state: 0,
+        })
+    }
+}
+
+struct BlockDevVisitor<'a> {
+    value: &'a BlockDev,
+    state: u8,
+}
+
+impl<'a> serde::ser::MapVisitor for BlockDevVisitor<'a> {
+    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
+        where S: serde::Serializer
+    {
+        match self.state {
+            0 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("dev", &self.value.dev))))
+            }
+            1 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("id", &self.value.id))))
+            }
+            2 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("path", &self.value.path))))
+            }
+            3 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("sectors", &*self.value.sectors))))
+            }
+            _ => {
+                Ok(None)
+            }
+        }
+    }
+}
+
 
 impl BlockDev {
     pub fn new(path: &Path) -> io::Result<BlockDev> {
@@ -359,12 +420,14 @@ pub struct LinearDev {
     dev: Device,
     start: SectorOffset,
     length: Sectors,
+    parent: Rc<RefCell<BlockDev>>,
 }
 
 impl LinearDev {
-    fn create(dm: &DM, name: &str, dev: Device, start: SectorOffset, len: Sectors)
+    fn create(dm: &DM, name: &str, blockdev: &Rc<RefCell<BlockDev>>, start: SectorOffset, len: Sectors)
               -> io::Result<LinearDev> {
 
+        let dev = blockdev.borrow().dev;
         let params = format!("{}:{} {}",
                              dev.major, dev.minor, *start);
         let table = (0u64, *len, "linear", params.as_ref());
@@ -381,6 +444,7 @@ impl LinearDev {
             dev: di.device(),
             start: start,
             length: len,
+            parent: blockdev.clone(),
         })
     }
 }
@@ -504,7 +568,7 @@ impl ThinPoolDev {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct ThinDev {
     dev: Device,
     thin_number: u32,
@@ -512,7 +576,7 @@ struct ThinDev {
 
 impl ThinDev {
     fn create(dm: &DM, name: &str, pool_dev: &ThinPoolDev) -> io::Result<ThinDev> {
-        let thin_number = 666;
+        let thin_number = 669;
         let thin_vol_sectors = 1024 * 1024 * 1024 * 1024 / SECTOR_SIZE;
 
         let (di, _) = try!(dm.target_msg(&pool_dev.dm_name, 0,
@@ -544,6 +608,42 @@ pub struct Froyo {
     raid_devs: Vec<Rc<RefCell<RaidDev>>>,
     thin_pool_dev: Option<ThinPoolDev>,
     thin_dev: Option<ThinDev>,
+}
+
+impl serde::Serialize for Froyo {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: serde::Serializer
+    {
+        serializer.visit_struct("Froyo", FroyoVisitor {
+            value: self,
+            state: 0,
+        })
+    }
+}
+
+struct FroyoVisitor<'a> {
+    value: &'a Froyo,
+    state: u8,
+}
+
+impl<'a> serde::ser::MapVisitor for FroyoVisitor<'a> {
+    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
+        where S: serde::Serializer
+    {
+        match self.state {
+            0 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("name", &self.value.name))))
+            }
+            1 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("thindev", &self.value.thin_dev))))
+            }
+            _ => {
+                Ok(None)
+            }
+        }
+    }
 }
 
 impl Froyo {
@@ -634,7 +734,7 @@ impl Froyo {
             let meta = Rc::new(RefCell::new(try!(LinearDev::create(
                 &dm,
                 &format!("{}-meta-{}-{}", self.name, raid_num, num),
-                bd.borrow().dev,
+                bd,
                 mdata_sector_start,
                 mdata_sectors))));
             bd.borrow_mut().linear_devs.push(meta.clone());
@@ -642,7 +742,7 @@ impl Froyo {
             let data = Rc::new(RefCell::new(try!(LinearDev::create(
                 &dm,
                 &format!("{}-data-{}-{}", self.name, raid_num, num),
-                bd.borrow().dev,
+                bd,
                 data_sector_start,
                 data_sectors))));
             bd.borrow_mut().linear_devs.push(data.clone());
@@ -729,6 +829,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
 
     for pathbuf in dev_paths {
         let bd = try!(BlockDev::initialize(&pathbuf, args.is_present("force")));
+        println!("sss {}", try!(serde_json::to_string(&bd)));
         try!(froyo.add_blockdev(bd));
     }
 
@@ -743,7 +844,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
     froyo.thin_dev = Some(thin_dev);
 
     // TODO: write metadata to all disks
-    //    println!("sss {}", try!(serde_json::to_string(&froyo)));
+    // println!("sss {}", try!(serde_json::to_string(&froyo)));
 
     Ok(())
 }
