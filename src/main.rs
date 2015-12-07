@@ -127,7 +127,7 @@ fn align_to(num: u64, align_to: u64) -> u64 {
 // Define a common error enum.
 // See http://blog.burntsushi.net/rust-error-handling/
 #[derive(Debug)]
-enum FroyoError {
+pub enum FroyoError {
     Io(io::Error),
     Serde(serde_json::error::Error),
 }
@@ -768,7 +768,7 @@ impl Froyo {
 
     // Try to make an as-large-as-possible redundant device from the
     // given block devices.
-    fn create_redundant_zone(&mut self) -> io::Result<Option<RaidDev>> {
+    fn create_redundant_zone(&mut self) -> Result<Option<RaidDev>, FroyoError> {
         let dm = try!(DM::new());
 
         // TODO: Make sure name has only chars we can use in a DM name
@@ -851,7 +851,7 @@ impl Froyo {
         Ok(Some(raid))
     }
 
-    pub fn create_redundant_zones(&mut self) -> io::Result<()> {
+    pub fn create_redundant_zones(&mut self) -> Result<(), FroyoError> {
         loop {
             if let Some(rd) = try!(self.create_redundant_zone()) {
                 self.raid_devs.push(Rc::new(RefCell::new(rd)));
