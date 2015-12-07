@@ -3,7 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //#![feature(slice_bytes, custom_derive, plugin, iter_cmp, iter_arith)]
-#![feature(slice_bytes, iter_cmp, iter_arith, zero_one, custom_derive, plugin)]
+#![feature(slice_bytes, iter_cmp, iter_arith, zero_one, custom_derive, custom_attribute, plugin)]
 #![plugin(serde_macros)]
 
 extern crate devicemapper;
@@ -20,7 +20,6 @@ extern crate serde_json;
 #[macro_use] extern crate custom_derive;
 #[macro_use] extern crate newtype_derive;
 
-#[allow(unused_imports)]
 use std::io;
 use std::io::{Read, Write, ErrorKind, Seek, SeekFrom};
 use std::error::Error;
@@ -41,7 +40,6 @@ use nix::sys::{stat, ioctl};
 use crc::crc32;
 use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
-use serde::ser::impls::SeqIteratorVisitor;
 
 //
 // Use distinct 'newtype' types for sectors and sector offsets for type safety.
@@ -181,59 +179,16 @@ fn blkdev_size(file: &File) -> io::Result<u64> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BlockDev {
+    #[serde(skip_serializing)]
     dev: Device,
     id: String,
     path: PathBuf,
     sectors: Sectors,
+    #[serde(skip_serializing)]
     linear_devs: Vec<Rc<RefCell<LinearDev>>>,
 }
-
-impl serde::Serialize for BlockDev {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
-        where S: serde::Serializer
-    {
-        serializer.visit_struct("BlockDev", BlockDevVisitor {
-            value: self,
-            state: 0,
-        })
-    }
-}
-
-struct BlockDevVisitor<'a> {
-    value: &'a BlockDev,
-    state: u8,
-}
-
-impl<'a> serde::ser::MapVisitor for BlockDevVisitor<'a> {
-    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
-        where S: serde::Serializer
-    {
-        match self.state {
-            0 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("dev", &self.value.dev))))
-            }
-            1 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("id", &self.value.id))))
-            }
-            2 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("path", &self.value.path))))
-            }
-            3 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("sectors", &*self.value.sectors))))
-            }
-            _ => {
-                Ok(None)
-            }
-        }
-    }
-}
-
 
 impl BlockDev {
     pub fn new(path: &Path) -> io::Result<BlockDev> {
@@ -443,17 +398,13 @@ impl<'a> serde::ser::MapVisitor for LinearDevVisitor<'a> {
             }
             1 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("dev", &self.value.dev))))
+                Ok(Some(try!(serializer.visit_struct_elt("start", &self.value.start))))
             }
             2 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("start", &self.value.start))))
-            }
-            3 => {
-                self.state += 1;
                 Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
             }
-            4 => {
+            3 => {
                 self.state += 1;
                 Ok(Some(try!(serializer.visit_struct_elt("parent", &self.value.parent.borrow().id))))
             }
@@ -497,6 +448,7 @@ pub struct RaidDev {
     stripe_sectors: Sectors,
     region_sectors: Sectors,
     length: Sectors,
+    // (meta dev, data dev)
     members: Vec<(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)>,
 }
 
@@ -523,26 +475,24 @@ impl<'a> serde::ser::MapVisitor for RaidDevVisitor<'a> {
         match self.state {
             0 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("dev", &self.value.dev))))
+                Ok(Some(try!(serializer.visit_struct_elt("stripe_sectors", &self.value.stripe_sectors))))
             }
             1 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("stripe_sectors", &self.value.stripe_sectors))))
+                Ok(Some(try!(serializer.visit_struct_elt("region_sectors", &self.value.region_sectors))))
             }
             2 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("region_sectors", &self.value.region_sectors))))
+                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
             }
             3 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
-            }
-            4 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_seq(SeqIteratorVisitor::new(
-                    self.value.members.iter()
-                        .map(|&(ref x, ref y)| (x.borrow().id.clone(), y.borrow().id.clone())),
-                    Some(self.value.members.len()))))))
+                // Just serialize ids of members
+                let ids: Vec<_> = self.value.members.iter()
+                    .map(|&(ref x, ref y)|
+                         (x.borrow().id.clone(), y.borrow().id.clone()))
+                    .collect();
+                Ok(Some(try!(serializer.visit_struct_elt("members", &ids))))
             }
             _ => {
                 Ok(None)
@@ -591,7 +541,7 @@ impl RaidDev {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct ThinPoolDev {
     dm_name: String,
     dev: Device,
@@ -728,8 +678,36 @@ impl<'a> serde::ser::MapVisitor for FroyoVisitor<'a> {
             }
             1 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("thindev", &self.value.thin_dev))))
+                let ids: Vec<_> = self.value.block_devs.iter()
+                    .map(|x| x.borrow().clone())
+                    .collect();
+                Ok(Some(try!(serializer.visit_struct_elt("block_devs", &ids))))
             }
+            2 => {
+                self.state += 1;
+                let ids: Vec<_> = self.value.linear_devs.iter()
+                    .map(|x| x.borrow().clone())
+                    .collect();
+                Ok(Some(try!(serializer.visit_struct_elt("linear_devs", &ids))))
+            }
+            3 => {
+                self.state += 1;
+                let ids: Vec<_> = self.value.raid_devs.iter()
+                    .map(|x| x.borrow().clone())
+                    .collect();
+                Ok(Some(try!(serializer.visit_struct_elt("raid_devs", &ids))))
+            }
+            4 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("thinpool_dev",
+                                                         &self.value.thin_pool_dev))))
+            }
+            5 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("thin_dev",
+                                                         &self.value.thin_dev))))
+            }
+
             _ => {
                 Ok(None)
             }
@@ -829,6 +807,7 @@ impl Froyo {
                 mdata_sector_start,
                 mdata_sectors))));
             bd.borrow_mut().linear_devs.push(meta.clone());
+            self.linear_devs.push(meta.clone());
 
             let data = Rc::new(RefCell::new(try!(LinearDev::create(
                 &dm,
@@ -837,6 +816,7 @@ impl Froyo {
                 data_sector_start,
                 data_sectors))));
             bd.borrow_mut().linear_devs.push(data.clone());
+            self.linear_devs.push(data.clone());
 
             linear_dev_pairs.push((meta, data));
         }
@@ -929,13 +909,14 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
     let dm = try!(DM::new());
 
     let thin_pool_dev = try!(ThinPoolDev::create(&dm, name, &froyo.raid_devs));
-    let thin_dev = try!(ThinDev::create(&dm, name, &thin_pool_dev));
+//    let thin_dev = try!(ThinDev::create(&dm, name, &thin_pool_dev));
 
     froyo.thin_pool_dev = Some(thin_pool_dev);
-    froyo.thin_dev = Some(thin_dev);
+//    froyo.thin_dev = Some(thin_dev);
+    froyo.thin_dev = None;
 
     // TODO: write metadata to all disks
-    // println!("sss {}", try!(serde_json::to_string(&froyo)));
+    println!("froyojson {}", try!(serde_json::to_string_pretty(&froyo)));
 
     Ok(())
 }
