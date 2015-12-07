@@ -118,14 +118,6 @@ macro_rules! dbgp {
         })
 }
 
-macro_rules! errp {
-    ($($arg:tt)*) => (
-        match writeln!(&mut ::std::io::stderr(), $($arg)* ) {
-            Ok(_) => {},
-            Err(x) => panic!("Unable to write to stderr: {}", x),
-        })
-}
-
 fn align_to(num: u64, align_to: u64) -> u64 {
     let agn = align_to - 1;
 
@@ -944,7 +936,10 @@ fn main() {
     };
 
     if let Err(r) = r {
-        errp!("{}", r.description());
+        match writeln!(&mut ::std::io::stderr(), "{}", r.description()) {
+            Ok(_) => {},
+            Err(x) => panic!("Unable to write to stderr: {}", x),
+        }
         exit(1);
-    };
+    }
 }
