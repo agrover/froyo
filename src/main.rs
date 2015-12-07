@@ -476,17 +476,21 @@ impl<'a> serde::ser::MapVisitor for RaidDevVisitor<'a> {
         match self.state {
             0 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("stripe_sectors", &self.value.stripe_sectors))))
+                Ok(Some(try!(serializer.visit_struct_elt("id", &self.value.id))))
             }
             1 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("region_sectors", &self.value.region_sectors))))
+                Ok(Some(try!(serializer.visit_struct_elt("stripe_sectors", &self.value.stripe_sectors))))
             }
             2 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
+                Ok(Some(try!(serializer.visit_struct_elt("region_sectors", &self.value.region_sectors))))
             }
             3 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
+            }
+            4 => {
                 self.state += 1;
                 // Just serialize ids of members
                 let ids: Vec<_> = self.value.members.iter()
