@@ -31,7 +31,6 @@ use std::str::{FromStr, from_utf8};
 use std::slice::bytes::copy_memory;
 use std::os::unix::prelude::AsRawFd;
 use std::fmt;
-//use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::num::Zero;
@@ -42,6 +41,7 @@ use nix::sys::{stat, ioctl};
 use crc::crc32;
 use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
+use serde::ser::impls::SeqIteratorVisitor;
 
 //
 // Use distinct 'newtype' types for sectors and sector offsets for type safety.
@@ -409,10 +409,59 @@ impl BlockDev {
 
 #[derive(Debug, Clone)]
 pub struct LinearDev {
+    id: String,
     dev: Device,
     start: SectorOffset,
     length: Sectors,
     parent: Rc<RefCell<BlockDev>>,
+}
+
+impl serde::Serialize for LinearDev {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: serde::Serializer
+    {
+        serializer.visit_struct("LinearDev", LinearDevVisitor {
+            value: self,
+            state: 0,
+        })
+    }
+}
+
+struct LinearDevVisitor<'a> {
+    value: &'a LinearDev,
+    state: u8,
+}
+
+impl<'a> serde::ser::MapVisitor for LinearDevVisitor<'a> {
+    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
+        where S: serde::Serializer
+    {
+        match self.state {
+            0 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("id", &self.value.id))))
+            }
+            1 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("dev", &self.value.dev))))
+            }
+            2 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("start", &self.value.start))))
+            }
+            3 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
+            }
+            4 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("parent", &self.value.parent.borrow().id))))
+            }
+            _ => {
+                Ok(None)
+            }
+        }
+    }
 }
 
 impl LinearDev {
@@ -433,6 +482,7 @@ impl LinearDev {
         dbgp!("Created {}", dm_name);
 
         Ok(LinearDev{
+            id: Uuid::new_v4().to_simple_string(),
             dev: di.device(),
             start: start,
             length: len,
@@ -448,6 +498,57 @@ pub struct RaidDev {
     region_sectors: Sectors,
     length: Sectors,
     members: Vec<(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)>,
+}
+
+impl serde::Serialize for RaidDev {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: serde::Serializer
+    {
+        serializer.visit_struct("RaidDev", RaidDevVisitor {
+            value: self,
+            state: 0,
+        })
+    }
+}
+
+struct RaidDevVisitor<'a> {
+    value: &'a RaidDev,
+    state: u8,
+}
+
+impl<'a> serde::ser::MapVisitor for RaidDevVisitor<'a> {
+    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
+        where S: serde::Serializer
+    {
+        match self.state {
+            0 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("dev", &self.value.dev))))
+            }
+            1 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("stripe_sectors", &self.value.stripe_sectors))))
+            }
+            2 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("region_sectors", &self.value.region_sectors))))
+            }
+            3 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
+            }
+            4 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_seq(SeqIteratorVisitor::new(
+                    self.value.members.iter()
+                        .map(|&(ref x, ref y)| (x.borrow().id.clone(), y.borrow().id.clone())),
+                    Some(self.value.members.len()))))))
+            }
+            _ => {
+                Ok(None)
+            }
+        }
+    }
 }
 
 impl RaidDev {
@@ -487,9 +588,7 @@ impl RaidDev {
             length: target_length,
             members: devs.to_vec(),
         })
-
     }
-
 }
 
 #[derive(Debug)]
