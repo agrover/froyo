@@ -444,6 +444,7 @@ impl LinearDev {
 
 #[derive(Debug, Clone)]
 pub struct RaidDev {
+    id: String,
     dev: Device,
     stripe_sectors: Sectors,
     region_sectors: Sectors,
@@ -532,6 +533,7 @@ impl RaidDev {
         dbgp!("Created {}", dm_name);
 
         Ok(RaidDev {
+            id: Uuid::new_v4().to_simple_string(),
             dev: raid_di.device(),
             stripe_sectors: stripe,
             region_sectors: region,
@@ -541,54 +543,130 @@ impl RaidDev {
     }
 }
 
+#[derive(Debug, Clone)]
+struct Segment {
+    start: SectorOffset,
+    length: Sectors,
+    parent: Rc<RefCell<RaidDev>>,
+}
+
+impl serde::Serialize for Segment {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: serde::Serializer
+    {
+        serializer.visit_struct("Segment", SegmentVisitor {
+            value: self,
+            state: 0,
+        })
+    }
+}
+
+struct SegmentVisitor<'a> {
+    value: &'a Segment,
+    state: u8,
+}
+
+impl<'a> serde::ser::MapVisitor for SegmentVisitor<'a> {
+    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
+        where S: serde::Serializer
+    {
+        match self.state {
+            0 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("start", &self.value.start))))
+            }
+            1 => {
+                self.state += 1;
+                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
+            }
+            2 => {
+                self.state += 1;
+                // Just serialize id of parent
+                Ok(Some(try!(serializer.visit_struct_elt("parent", &self.value.parent.borrow().id))))
+            }
+            _ => {
+                Ok(None)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RaidLinearDev {
+    id: String,
+    #[serde(skip_serializing)]
+    dev: Device,
+    segments: Vec<Segment>,
+}
+
+impl RaidLinearDev {
+    fn create(dm: &DM, name: &str, parent: &Rc<RefCell<RaidDev>>, start: SectorOffset, len: Sectors)
+              -> io::Result<RaidLinearDev> {
+
+        let dev = parent.borrow().dev;
+        let params = format!("{}:{} {}",
+                             dev.major, dev.minor, *start);
+        let table = (0u64, *len, "linear", params.as_ref());
+
+        let dm_name = format!("froyo-raid-linear-{}", name);
+
+        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
+        let di = try!(dm.table_load(&dm_name, &vec![table][..]));
+        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+
+        dbgp!("Created {}", dm_name);
+
+        let segment = Segment {
+            start: start,
+            length: len,
+            parent: parent.clone(),
+        };
+
+        Ok(RaidLinearDev{
+            id: Uuid::new_v4().to_simple_string(),
+            dev: di.device(),
+            segments: vec![segment],
+        })
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct ThinPoolDev {
     dm_name: String,
     dev: Device,
-    meta_dev: Device,
-    data_dev: Device,
+    meta_dev: RaidLinearDev,
+    data_dev: RaidLinearDev,
 }
 
 impl ThinPoolDev {
     fn create(dm: &DM, name: &str, devs: &[Rc<RefCell<RaidDev>>])
               -> io::Result<ThinPoolDev> {
-        // FIXME: Create metadata on 0th raid, data on 1st raid
+        // FIXME: Creating metadata on 0th raid, data on 1st raid
 
-        let raiddev_0 = devs[0].borrow_mut();
-        let raiddev_1 = devs[1].borrow_mut();
-        let start = 0;
-
-
-        let params = format!("{}:{} {}",
-                             raiddev_0.dev.major, raiddev_0.dev.minor, start);
-        let table = (0u64, 8192, "linear", params.as_ref());
-
-        let dm_name = format!("froyo-linear-thin-meta-{}", name);
-
-        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let meta_di = try!(dm.table_load(&dm_name, &vec![table]));
-        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-
-        dbgp!("Created {}", dm_name);
+        let meta_name = format!("thin-meta-{}", name);
+        let meta_raid_dev = try!(RaidLinearDev::create(
+            dm,
+            &meta_name,
+            &devs[0],
+            SectorOffset(0),
+            Sectors(8192)));
 
         let data_sectors = 1024 * 1024;
-        let params = format!("{}:{} {}",
-                             raiddev_1.dev.major, raiddev_1.dev.minor, start);
-        let table = (0u64, data_sectors, "linear", params.as_ref());
-
-        let dm_name = format!("froyo-linear-thin-data-{}", name);
-
-        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let data_di = try!(dm.table_load(&dm_name, &vec![table]));
-        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-
-        dbgp!("Created {}", dm_name);
+        let meta_name = format!("thin-data-{}", name);
+        let data_raid_dev = try!(RaidLinearDev::create(
+            dm,
+            &meta_name,
+            &devs[1],
+            SectorOffset(0),
+            Sectors(data_sectors)));
 
         let data_block_sectors = 2048; // 1MiB
         let low_water_sectors = 2048 * 512; // 512MiB
         let params = format!("{}:{} {}:{} {} {}",
-                             meta_di.device().major, meta_di.device().minor,
-                             data_di.device().major, data_di.device().minor,
+                             meta_raid_dev.dev.major,
+                             meta_raid_dev.dev.minor,
+                             data_raid_dev.dev.major,
+                             data_raid_dev.dev.minor,
                              data_block_sectors, low_water_sectors);
         let table = (0u64, data_sectors, "thin-pool", params.as_ref());
 
@@ -603,8 +681,8 @@ impl ThinPoolDev {
         Ok(ThinPoolDev {
             dm_name: dm_name,
             dev: pool_di.device(),
-            meta_dev: meta_di.device(),
-            data_dev: data_di.device(),
+            meta_dev: meta_raid_dev,
+            data_dev: data_raid_dev,
         })
     }
 }
@@ -900,7 +978,6 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
 
     for pathbuf in dev_paths {
         let bd = try!(BlockDev::initialize(&pathbuf, args.is_present("force")));
-        println!("sss {}", try!(serde_json::to_string(&bd)));
         try!(froyo.add_blockdev(bd));
     }
 
