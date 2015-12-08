@@ -33,6 +33,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::num::Zero;
+use std::cmp::Ordering;
 
 use devicemapper::{DM, Device, DmFlags};
 use clap::{App, Arg, SubCommand, ArgMatches};
@@ -92,6 +93,10 @@ const SECTOR_SIZE: u64 = 512;
 const HEADER_SIZE: u64 = 512;
 const MDA_ZONE_SIZE: u64 = (1024 * 1024);
 const MDA_ZONE_SECTORS: Sectors = Sectors(MDA_ZONE_SIZE / SECTOR_SIZE);
+const MDAX_ZONE_SECTORS: Sectors = Sectors(1020);
+const MDAA_ZONE_OFFSET: SectorOffset = SectorOffset(8);
+const MDAB_ZONE_OFFSET: SectorOffset = SectorOffset(1028);
+
 const FRO_MAGIC: &'static [u8] = b"!IamFroy0\x86\xffGO\x02^\x41";
 const STRIPE_SECTORS: Sectors = Sectors(2048);
 
@@ -186,6 +191,15 @@ fn blkdev_size(file: &File) -> io::Result<u64> {
 // We use these to make a ThinPoolDev.
 // From that, we allocate a ThinDev.
 
+#[derive(Debug, Clone, PartialEq)]
+struct MDA {
+    timestamp: u64,
+    serial: u32,
+    length: u32,
+    crc: u32,
+    offset: SectorOffset,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockDev {
     #[serde(skip_serializing)]
@@ -193,6 +207,10 @@ pub struct BlockDev {
     id: String,
     path: PathBuf,
     sectors: Sectors,
+    #[serde(skip_serializing)]
+    mdaa: MDA,
+    #[serde(skip_serializing)]
+    mdab: MDA,
     #[serde(skip_serializing)]
     linear_devs: Vec<Rc<RefCell<LinearDev>>>,
 }
@@ -247,6 +265,20 @@ impl BlockDev {
             dev: dev,
             path: path.to_owned(),
             sectors: sectors,
+            mdaa: MDA {
+                timestamp: LittleEndian::read_u64(&buf[64..72]),
+                serial: LittleEndian::read_u32(&buf[72..76]),
+                length: LittleEndian::read_u32(&buf[76..80]),
+                crc: LittleEndian::read_u32(&buf[80..84]),
+                offset: MDAA_ZONE_OFFSET,
+            },
+            mdab: MDA {
+                timestamp: LittleEndian::read_u64(&buf[96..104]),
+                serial: LittleEndian::read_u32(&buf[104..108]),
+                length: LittleEndian::read_u32(&buf[108..112]),
+                crc: LittleEndian::read_u32(&buf[112..116]),
+                offset: MDAB_ZONE_OFFSET,
+            },
             linear_devs: Vec::new(), // Not initialized until metadata is read
         })
     }
@@ -265,12 +297,17 @@ impl BlockDev {
                 format!("{} is not a block device", path.display())));
         }
 
+        let dev = match Device::from_str(&path.to_string_lossy()) {
+            Err(_) => return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} is not a block device", path.display()))),
+            Ok(x) => x,
+        };
+
         let mut f = match OpenOptions::new().read(true).write(true).open(path) {
-            Err(_) => {
-                return Err(io::Error::new(
-                    ErrorKind::PermissionDenied,
-                    format!("Could not open {}", path.display())));
-            },
+            Err(_) => return Err(io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!("Could not open {}", path.display()))),
             Ok(x) => x,
         };
 
@@ -293,40 +330,31 @@ impl BlockDev {
                 format!("{} too small, 1G minimum", path.display())));
         }
 
-        let mut buf = [0u8; MDA_ZONE_SIZE as usize];
-
-        copy_memory(FRO_MAGIC, &mut buf[4..20]);
-        LittleEndian::write_u64(&mut buf[20..28], dev_size / SECTOR_SIZE);
-        // no flags
-        let id = Uuid::new_v4().to_simple_string();
-        copy_memory(id.as_bytes(), &mut buf[32..64]);
-        // no MDAs in use yet
-
-        // All done, calc CRC and write
-        let crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
-        LittleEndian::write_u32(&mut buf[..4], crc);
-
-        try!(f.seek(SeekFrom::Start(0)));
-        try!(f.write_all(&buf));
-        try!(f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64))));
-        try!(f.write_all(&buf));
-
-        try!(f.flush());
-
-        let dev = match Device::from_str(&path.to_string_lossy()) {
-            Ok(x) => x,
-            Err(_) => return Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("{} is not a block device", path.display())))
-        };
-
-        Ok(BlockDev {
-            id: id,
+        let mut bd = BlockDev {
+            id: Uuid::new_v4().to_simple_string(),
             dev: dev,
             path: path.to_owned(),
             sectors: Sectors(dev_size / SECTOR_SIZE),
+            mdaa: MDA {
+                timestamp: 0,
+                serial: 0,
+                length: 0,
+                crc: 0,
+                offset: MDAA_ZONE_OFFSET,
+            },
+            mdab: MDA {
+                timestamp: 0,
+                serial: 0,
+                length: 0,
+                crc: 0,
+                offset: MDAB_ZONE_OFFSET,
+            },
             linear_devs: Vec::new(),
-        })
+        };
+
+        try!(bd.write_mda_header());
+
+        Ok(bd)
     }
 
     fn used_areas(&self) -> Vec<(SectorOffset, Sectors)> {
@@ -366,6 +394,93 @@ impl BlockDev {
     fn largest_free_area(&self) -> Option<(SectorOffset, Sectors)> {
         self.free_areas().into_iter()
             .max_by(|&(_, len)| len)
+    }
+
+    // Write metadata to least-recently-written MDA
+    fn write_mdax(&mut self, metadata: &[u8]) -> io::Result<()> {
+        let now = time::now().to_timespec().sec as u64;
+
+        let (older_mda, younger_mda) = match self.mdaa.timestamp.cmp(&self.mdab.timestamp) {
+            Ordering::Less => (&mut self.mdaa, &mut self.mdab),
+            Ordering::Greater => (&mut self.mdab, &mut self.mdaa),
+            Ordering::Equal => {
+                match self.mdaa.serial.cmp(&self.mdab.serial) {
+                    Ordering::Less => (&mut self.mdaa, &mut self.mdab),
+                    Ordering::Greater => (&mut self.mdab, &mut self.mdaa),
+                    Ordering::Equal => (&mut self.mdaa, &mut self.mdab),
+                }
+            }
+        };
+
+        let serial = {
+            if younger_mda.timestamp == now {
+                younger_mda.serial + 1
+            } else {
+                0
+            }
+        };
+
+        if metadata.len() as u64 > *MDAX_ZONE_SECTORS * SECTOR_SIZE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Metadata too large for MDA, {} bytes", metadata.len())))
+        }
+
+        older_mda.crc = crc32::checksum_ieee(&metadata);
+        older_mda.length = metadata.len() as u32;
+        older_mda.timestamp = now;
+        older_mda.serial = serial;
+
+        let mut f = try!(OpenOptions::new().write(true).open(&self.path));
+
+        // write metadata to disk
+        try!(f.seek(SeekFrom::Start(*older_mda.offset * SECTOR_SIZE)));
+        try!(f.write_all(&metadata));
+        try!(f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64))));
+        try!(f.seek(SeekFrom::Current((*older_mda.offset * SECTOR_SIZE) as i64)));
+        try!(f.write_all(&metadata));
+        try!(f.flush());
+
+        Ok(())
+    }
+
+    fn write_mda_header(&mut self) -> io::Result<()> {
+        let mut buf = [0u8; HEADER_SIZE as usize];
+        copy_memory(FRO_MAGIC, &mut buf[4..20]);
+        LittleEndian::write_u64(&mut buf[20..28], *self.sectors);
+        // no flags
+        copy_memory(self.id.as_bytes(), &mut buf[32..64]);
+
+        LittleEndian::write_u64(&mut buf[64..72], self.mdaa.timestamp);
+        LittleEndian::write_u32(&mut buf[72..76], self.mdaa.serial);
+        LittleEndian::write_u32(&mut buf[76..80], self.mdaa.length);
+        LittleEndian::write_u32(&mut buf[80..84], self.mdaa.crc);
+
+        LittleEndian::write_u64(&mut buf[96..104], self.mdab.timestamp);
+        LittleEndian::write_u32(&mut buf[104..108], self.mdab.serial);
+        LittleEndian::write_u32(&mut buf[108..112], self.mdab.length,);
+        LittleEndian::write_u32(&mut buf[112..116], self.mdab.crc);
+
+        // All done, calc CRC and write
+        let hdr_crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
+        LittleEndian::write_u32(&mut buf[..4], hdr_crc);
+
+        let mut f = try!(OpenOptions::new().write(true).open(&self.path));
+
+        try!(f.seek(SeekFrom::Start(0)));
+        try!(f.write_all(&buf));
+        try!(f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64))));
+        try!(f.write_all(&buf));
+        try!(f.flush());
+
+        Ok(())
+    }
+
+    fn save_state(&mut self, metadata: &[u8]) -> io::Result<()> {
+        try!(self.write_mdax(metadata));
+        try!(self.write_mda_header());
+
+        Ok(())
     }
 }
 
@@ -946,6 +1061,16 @@ impl Froyo {
     pub fn reshape(&mut self) -> io::Result<()> {
         Ok(())
     }
+
+    fn save_state(&self) -> Result<(), FroyoError> {
+        let metadata = try!(serde_json::to_string(self));
+
+        for bd in &self.block_devs {
+            try!(bd.borrow_mut().save_state(metadata.as_bytes()))
+        }
+
+        Ok(())
+    }
 }
 
 fn list(_args: &ArgMatches) -> Result<(), FroyoError> {
@@ -1005,7 +1130,8 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
     froyo.thin_devs.push(try!(ThinDev::create(
         &dm, name, froyo.thin_pool_dev.as_ref().unwrap())));
 
-    // TODO: write metadata to all disks
+    try!(froyo.save_state());
+
     println!("froyojson {}", try!(serde_json::to_string_pretty(&froyo)));
 
     Ok(())
