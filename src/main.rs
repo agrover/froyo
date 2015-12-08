@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//#![feature(slice_bytes, custom_derive, plugin, iter_cmp, iter_arith)]
-#![feature(slice_bytes, iter_cmp, iter_arith, zero_one, custom_derive, custom_attribute, plugin)]
+#![feature(slice_bytes, iter_cmp, iter_arith, zero_one, custom_derive,
+           custom_attribute, plugin)]
 #![plugin(serde_macros)]
 
 extern crate devicemapper;
@@ -178,6 +178,13 @@ fn blkdev_size(file: &File) -> io::Result<u64> {
         Ok(_) => Ok(val),
     }
 }
+
+// We are given BlockDevs to start.
+// We allocate LinearDevs from each for the meta and data devices.
+// We use all these to make RaidDevs.
+// We create two RaidLinearDevs from these for meta and data devices.
+// We use these to make a ThinPoolDev.
+// From that, we allocate a ThinDev.
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockDev {
@@ -406,7 +413,8 @@ impl<'a> serde::ser::MapVisitor for LinearDevVisitor<'a> {
             }
             3 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("parent", &self.value.parent.borrow().id))))
+                Ok(Some(try!(serializer.visit_struct_elt(
+                    "parent", &self.value.parent.borrow().id))))
             }
             _ => {
                 Ok(None)
@@ -480,11 +488,13 @@ impl<'a> serde::ser::MapVisitor for RaidDevVisitor<'a> {
             }
             1 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("stripe_sectors", &self.value.stripe_sectors))))
+                Ok(Some(try!(serializer.visit_struct_elt(
+                    "stripe_sectors", &self.value.stripe_sectors))))
             }
             2 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("region_sectors", &self.value.region_sectors))))
+                Ok(Some(try!(serializer.visit_struct_elt(
+                    "region_sectors", &self.value.region_sectors))))
             }
             3 => {
                 self.state += 1;
@@ -507,7 +517,8 @@ impl<'a> serde::ser::MapVisitor for RaidDevVisitor<'a> {
 }
 
 impl RaidDev {
-    fn create(dm: &DM, name: &str, devs: &[(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)], stripe: Sectors, region: Sectors)
+    fn create(dm: &DM, name: &str, devs: &[(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)],
+              stripe: Sectors, region: Sectors)
               -> io::Result<RaidDev> {
 
         let raid_texts: Vec<_> = devs.iter()
@@ -586,7 +597,8 @@ impl<'a> serde::ser::MapVisitor for SegmentVisitor<'a> {
             2 => {
                 self.state += 1;
                 // Just serialize id of parent
-                Ok(Some(try!(serializer.visit_struct_elt("parent", &self.value.parent.borrow().id))))
+                Ok(Some(try!(serializer.visit_struct_elt(
+                    "parent", &self.value.parent.borrow().id))))
             }
             _ => {
                 Ok(None)
@@ -781,13 +793,13 @@ impl<'a> serde::ser::MapVisitor for FroyoVisitor<'a> {
             }
             4 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("thinpool_dev",
-                                                         &self.value.thin_pool_dev))))
+                Ok(Some(try!(serializer.visit_struct_elt(
+                    "thinpool_dev", &self.value.thin_pool_dev))))
             }
             5 => {
                 self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("thin_dev",
-                                                         &self.value.thin_dev))))
+                Ok(Some(try!(serializer.visit_struct_elt(
+                    "thin_dev", &self.value.thin_dev))))
             }
 
             _ => {
