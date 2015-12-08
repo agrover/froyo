@@ -711,11 +711,13 @@ struct ThinDev {
 
 impl ThinDev {
     fn create(dm: &DM, name: &str, pool_dev: &ThinPoolDev) -> io::Result<ThinDev> {
-        let thin_number = 669;
+        let thin_number = 0;
         let thin_vol_sectors = 1024 * 1024 * 1024 * 1024 / SECTOR_SIZE;
 
-        let (di, _) = try!(dm.target_msg(&pool_dev.dm_name, 0,
-                                         &format!("create_thin {}", thin_number)));
+        match dm.target_msg(&pool_dev.dm_name, 0, &format!("create_thin {}", thin_number)) {
+            Err(x) => dbgp!("create_thin message failed: {}", x.description()),
+            Ok(_) => {},
+        }
 
         let params = format!("{}:{} {}", pool_dev.dev.major, pool_dev.dev.minor, thin_number);
         let table = (0u64, thin_vol_sectors, "thin", params.as_ref());
@@ -742,7 +744,7 @@ pub struct Froyo {
     linear_devs: Vec<Rc<RefCell<LinearDev>>>,
     raid_devs: Vec<Rc<RefCell<RaidDev>>>,
     thin_pool_dev: Option<ThinPoolDev>,
-    thin_dev: Option<ThinDev>,
+    thin_devs: Vec<ThinDev>,
 }
 
 impl serde::Serialize for Froyo {
@@ -799,7 +801,7 @@ impl<'a> serde::ser::MapVisitor for FroyoVisitor<'a> {
             5 => {
                 self.state += 1;
                 Ok(Some(try!(serializer.visit_struct_elt(
-                    "thin_dev", &self.value.thin_dev))))
+                    "thin_devs", &self.value.thin_devs))))
             }
 
             _ => {
@@ -810,7 +812,6 @@ impl<'a> serde::ser::MapVisitor for FroyoVisitor<'a> {
 }
 
 impl Froyo {
-
     fn new(name: &str) -> Froyo {
         Froyo {
             name: name.to_owned(),
@@ -818,7 +819,7 @@ impl Froyo {
             linear_devs: Vec::new(),
             raid_devs: Vec::new(),
             thin_pool_dev: None,
-            thin_dev: None,
+            thin_devs: Vec::new(),
         }
     }
 
@@ -836,7 +837,6 @@ impl Froyo {
 
         Ok(vec![Froyo::new("ss")])
     }
-
 
     // Try to make an as-large-as-possible redundant device from the
     // given block devices.
@@ -1001,12 +1001,9 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
 
     let dm = try!(DM::new());
 
-    let thin_pool_dev = try!(ThinPoolDev::create(&dm, name, &froyo.raid_devs));
-//    let thin_dev = try!(ThinDev::create(&dm, name, &thin_pool_dev));
-
-    froyo.thin_pool_dev = Some(thin_pool_dev);
-//    froyo.thin_dev = Some(thin_dev);
-    froyo.thin_dev = None;
+    froyo.thin_pool_dev = Some(try!(ThinPoolDev::create(&dm, name, &froyo.raid_devs)));
+    froyo.thin_devs.push(try!(ThinDev::create(
+        &dm, name, froyo.thin_pool_dev.as_ref().unwrap())));
 
     // TODO: write metadata to all disks
     println!("froyojson {}", try!(serde_json::to_string_pretty(&froyo)));
