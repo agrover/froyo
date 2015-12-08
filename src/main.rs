@@ -3,7 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #![feature(slice_bytes, iter_cmp, iter_arith, zero_one, custom_derive,
-           custom_attribute, plugin)]
+           custom_attribute, plugin, read_exact)]
 #![plugin(serde_macros)]
 
 extern crate devicemapper;
@@ -34,6 +34,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::num::Zero;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 
 use devicemapper::{DM, Device, DmFlags};
 use clap::{App, Arg, SubCommand, ArgMatches};
@@ -254,6 +255,7 @@ impl BlockDev {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("{} Froyo header CRC failed", path.display())));
+            // TODO: Try to read end-of-disk copy
         }
 
         let sectors = Sectors(try!(blkdev_size(&f)) / SECTOR_SIZE);
@@ -394,6 +396,41 @@ impl BlockDev {
     fn largest_free_area(&self) -> Option<(SectorOffset, Sectors)> {
         self.free_areas().into_iter()
             .max_by(|&(_, len)| len)
+    }
+
+    // Read metedata from newest MDA
+    fn read_mdax(&self) -> io::Result<Vec<u8>> {
+        let younger_mda = match self.mdaa.timestamp.cmp(&self.mdab.timestamp) {
+            Ordering::Less => &self.mdab,
+            Ordering::Greater => &self.mdaa,
+            Ordering::Equal => {
+                match self.mdaa.serial.cmp(&self.mdab.serial) {
+                    Ordering::Less => &self.mdab,
+                    Ordering::Greater => &self.mdaa,
+                    Ordering::Equal => &self.mdab,
+                }
+            }
+        };
+
+        if younger_mda.timestamp == 0 {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput, "Neither MDA region is in use"))
+        }
+
+        let mut f = try!(OpenOptions::new().read(true).open(&self.path));
+        let mut buf = vec![0; younger_mda.length as usize];
+
+        // read metadata from disk
+        try!(f.seek(SeekFrom::Start(*younger_mda.offset * SECTOR_SIZE)));
+        try!(f.read_exact(&mut buf));
+
+        if younger_mda.crc != crc32::checksum_ieee(&buf) {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput, "Froyo MDA CRC failed"))
+                // TODO: Read backup copy
+        }
+
+        Ok(buf)
     }
 
     // Write metadata to least-recently-written MDA
@@ -948,6 +985,20 @@ impl Froyo {
             .filter_map(|path| { BlockDev::new(&path).ok() })
             .collect::<Vec<_>>();
 
+        let lst: BTreeMap<String, Vec<BlockDev>> = BTreeMap::new();
+
+        for bd in froyo_bdevs {
+
+            let b = try!(bd.read_mdax());
+            println!("metadata {}", String::from_utf8_lossy(&b));
+
+            // lst.entry(bd.id.clone())
+            //     .or_insert(Vec::new())
+            //     .push(bd);
+        }
+
+        println!("sup {:?}", lst.len());
+
         // TODO: build froyodevs out of collected blockdevs.
 
         Ok(vec![Froyo::new("ss")])
@@ -1074,7 +1125,7 @@ impl Froyo {
 }
 
 fn list(_args: &ArgMatches) -> Result<(), FroyoError> {
-    println!("hello from list()");
+    try!(Froyo::find_all());
     Ok(())
 }
 
