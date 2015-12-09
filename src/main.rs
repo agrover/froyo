@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#![feature(slice_bytes, iter_cmp, iter_arith, zero_one, custom_derive,
-           custom_attribute, plugin, read_exact)]
+#![feature(iter_arith, zero_one, custom_derive,
+           custom_attribute, plugin, clone_from_slice)]
 #![plugin(serde_macros)]
 
 extern crate devicemapper;
@@ -27,7 +27,6 @@ use std::process::exit;
 use std::fs::{File, OpenOptions, read_dir};
 use std::path::{Path, PathBuf};
 use std::str::{FromStr, from_utf8};
-use std::slice::bytes::copy_memory;
 use std::os::unix::prelude::AsRawFd;
 use std::fmt;
 use std::rc::Rc;
@@ -395,7 +394,7 @@ impl BlockDev {
 
     fn largest_free_area(&self) -> Option<(SectorOffset, Sectors)> {
         self.free_areas().into_iter()
-            .max_by(|&(_, len)| len)
+            .max_by_key(|&(_, len)| len)
     }
 
     // Read metedata from newest MDA
@@ -483,10 +482,10 @@ impl BlockDev {
 
     fn write_mda_header(&mut self) -> io::Result<()> {
         let mut buf = [0u8; HEADER_SIZE as usize];
-        copy_memory(FRO_MAGIC, &mut buf[4..20]);
+        buf[4..20].clone_from_slice(FRO_MAGIC);
         LittleEndian::write_u64(&mut buf[20..28], *self.sectors);
         // no flags
-        copy_memory(self.id.as_bytes(), &mut buf[32..64]);
+        buf[32..64].clone_from_slice(self.id.as_bytes());
 
         LittleEndian::write_u64(&mut buf[64..72], self.mdaa.timestamp);
         LittleEndian::write_u32(&mut buf[72..76], self.mdaa.serial);
