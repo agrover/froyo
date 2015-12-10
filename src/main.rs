@@ -41,6 +41,7 @@ use nix::sys::{stat, ioctl};
 use crc::crc32;
 use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
+use time::Timespec;
 
 //
 // Use distinct 'newtype' types for sectors and sector offsets for type safety.
@@ -193,8 +194,7 @@ fn blkdev_size(file: &File) -> io::Result<u64> {
 
 #[derive(Debug, Clone, PartialEq)]
 struct MDA {
-    timestamp: u64,
-    serial: u32,
+    last_updated: Timespec,
     length: u32,
     crc: u32,
     offset: SectorOffset,
@@ -270,15 +270,17 @@ impl BlockDev {
             path: path.to_owned(),
             sectors: sectors,
             mdaa: MDA {
-                timestamp: LittleEndian::read_u64(&buf[64..72]),
-                serial: LittleEndian::read_u32(&buf[72..76]),
+                last_updated: Timespec::new(
+                    LittleEndian::read_u64(&buf[64..72]) as i64,
+                    LittleEndian::read_u32(&buf[72..76]) as i32),
                 length: LittleEndian::read_u32(&buf[76..80]),
                 crc: LittleEndian::read_u32(&buf[80..84]),
                 offset: MDAA_ZONE_OFFSET,
             },
             mdab: MDA {
-                timestamp: LittleEndian::read_u64(&buf[96..104]),
-                serial: LittleEndian::read_u32(&buf[104..108]),
+                last_updated: Timespec::new(
+                    LittleEndian::read_u64(&buf[96..104]) as i64,
+                    LittleEndian::read_u32(&buf[104..108]) as i32),
                 length: LittleEndian::read_u32(&buf[108..112]),
                 crc: LittleEndian::read_u32(&buf[112..116]),
                 offset: MDAB_ZONE_OFFSET,
@@ -341,15 +343,13 @@ impl BlockDev {
             path: path.to_owned(),
             sectors: Sectors(dev_size / SECTOR_SIZE),
             mdaa: MDA {
-                timestamp: 0,
-                serial: 0,
+                last_updated: Timespec::new(0,0),
                 length: 0,
                 crc: 0,
                 offset: MDAA_ZONE_OFFSET,
             },
             mdab: MDA {
-                timestamp: 0,
-                serial: 0,
+                last_updated: Timespec::new(0,0),
                 length: 0,
                 crc: 0,
                 offset: MDAB_ZONE_OFFSET,
@@ -401,21 +401,15 @@ impl BlockDev {
             .max_by_key(|&(_, len)| len)
     }
 
-    // Read metedata from newest MDA
+    // Read metadata from newest MDA
     fn read_mdax(&self) -> io::Result<Vec<u8>> {
-        let younger_mda = match self.mdaa.timestamp.cmp(&self.mdab.timestamp) {
+        let younger_mda = match self.mdaa.last_updated.cmp(&self.mdab.last_updated) {
             Ordering::Less => &self.mdab,
             Ordering::Greater => &self.mdaa,
-            Ordering::Equal => {
-                match self.mdaa.serial.cmp(&self.mdab.serial) {
-                    Ordering::Less => &self.mdab,
-                    Ordering::Greater => &self.mdaa,
-                    Ordering::Equal => &self.mdab,
-                }
-            }
+            Ordering::Equal => &self.mdab,
         };
 
-        if younger_mda.timestamp == 0 {
+        if younger_mda.last_updated == Timespec::new(0,0) {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput, "Neither MDA region is in use"))
         }
@@ -437,27 +431,11 @@ impl BlockDev {
     }
 
     // Write metadata to least-recently-written MDA
-    fn write_mdax(&mut self, metadata: &[u8]) -> io::Result<()> {
-        let now = time::now().to_timespec().sec as u64;
-
-        let (older_mda, younger_mda) = match self.mdaa.timestamp.cmp(&self.mdab.timestamp) {
-            Ordering::Less => (&mut self.mdaa, &mut self.mdab),
-            Ordering::Greater => (&mut self.mdab, &mut self.mdaa),
-            Ordering::Equal => {
-                match self.mdaa.serial.cmp(&self.mdab.serial) {
-                    Ordering::Less => (&mut self.mdaa, &mut self.mdab),
-                    Ordering::Greater => (&mut self.mdab, &mut self.mdaa),
-                    Ordering::Equal => (&mut self.mdaa, &mut self.mdab),
-                }
-            }
-        };
-
-        let serial = {
-            if younger_mda.timestamp == now {
-                younger_mda.serial + 1
-            } else {
-                0
-            }
+    fn write_mdax(&mut self, time: &Timespec, metadata: &[u8]) -> io::Result<()> {
+        let older_mda = match self.mdaa.last_updated.cmp(&self.mdab.last_updated) {
+            Ordering::Less => &mut self.mdaa,
+            Ordering::Greater => &mut self.mdab,
+            Ordering::Equal => &mut self.mdaa,
         };
 
         if metadata.len() as u64 > *MDAX_ZONE_SECTORS * SECTOR_SIZE {
@@ -468,8 +446,7 @@ impl BlockDev {
 
         older_mda.crc = crc32::checksum_ieee(&metadata);
         older_mda.length = metadata.len() as u32;
-        older_mda.timestamp = now;
-        older_mda.serial = serial;
+        older_mda.last_updated = *time;
 
         let mut f = try!(OpenOptions::new().write(true).open(&self.path));
 
@@ -491,13 +468,13 @@ impl BlockDev {
         // no flags
         buf[32..64].clone_from_slice(self.id.as_bytes());
 
-        LittleEndian::write_u64(&mut buf[64..72], self.mdaa.timestamp);
-        LittleEndian::write_u32(&mut buf[72..76], self.mdaa.serial);
+        LittleEndian::write_u64(&mut buf[64..72], self.mdaa.last_updated.sec as u64);
+        LittleEndian::write_u32(&mut buf[72..76], self.mdaa.last_updated.nsec as u32);
         LittleEndian::write_u32(&mut buf[76..80], self.mdaa.length);
         LittleEndian::write_u32(&mut buf[80..84], self.mdaa.crc);
 
-        LittleEndian::write_u64(&mut buf[96..104], self.mdab.timestamp);
-        LittleEndian::write_u32(&mut buf[104..108], self.mdab.serial);
+        LittleEndian::write_u64(&mut buf[96..104], self.mdab.last_updated.sec as u64);
+        LittleEndian::write_u32(&mut buf[104..108], self.mdab.last_updated.nsec as u32);
         LittleEndian::write_u32(&mut buf[108..112], self.mdab.length,);
         LittleEndian::write_u32(&mut buf[112..116], self.mdab.crc);
 
@@ -518,8 +495,8 @@ impl BlockDev {
         Ok(())
     }
 
-    fn save_state(&mut self, metadata: &[u8]) -> io::Result<()> {
-        try!(self.write_mdax(metadata));
+    fn save_state(&mut self, time: &Timespec, metadata: &[u8]) -> io::Result<()> {
+        try!(self.write_mdax(time, metadata));
         try!(self.write_mda_header());
 
         Ok(())
@@ -1122,9 +1099,10 @@ impl Froyo {
 
     fn save_state(&self) -> Result<(), FroyoError> {
         let metadata = try!(serde_json::to_string(self));
+        let current_time = time::now().to_timespec();
 
         for bd in &self.block_devs {
-            try!(bd.borrow_mut().save_state(metadata.as_bytes()))
+            try!(bd.borrow_mut().save_state(&current_time, metadata.as_bytes()))
         }
 
         Ok(())

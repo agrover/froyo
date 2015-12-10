@@ -24,13 +24,13 @@ All values little-endian.
 |20      |8       |Device size in 512-byte sectors (u64)
 |28      |4       |flags
 |32      |32      |Hex UUID for the block device
-|64      |8       |MDAA timestamp (u64)
-|72      |4       |MDAA serial (u32)
+|64      |8       |MDAA UNIX timestamp (seconds since Jan 1 1970) (u64)
+|72      |4       |MDAA nanoseconds (u32)
 |76      |4       |MDAA used length in bytes (u32)
 |80      |4       |MDAA CRC32
 |84      |12      |unused
-|96      |8       |MDAB timestamp (u64)
-|104     |4       |MDAB serial (u32)
+|96      |8       |MDAB UNIX timestamp (seconds since Jan 1 1970) (u64)
+|104     |4       |MDAB nanoseconds (u32)
 |108     |4       |MDAB used length in bytes (u32)
 |112     |4       |MDAB CRC32
 |116     |12      |unused
@@ -48,11 +48,17 @@ timestamps are equal.
 First, the JSON metadata is written to either MDAA or MDAB, as
 determined above, in both zones.
 
-Second, the chosen MDA's timestamp, serial, length, and CRC fields are
-updated: timestamp gets the UNIX timestamp. If the other MDA has the
-same timestamp, serial is one more than the other MDA's
-serial. Otherwise serial is zero.  Length is set to the length of the
-metadata, and the CRC32 is calculated on the data up to that length.
+Second, the chosen MDA's timestamp, nanosecond, length, and CRC fields
+are updated: timestamp gets the UNIX timestamp. Nanoseconds is the
+current nanoseconds within the second. Length is set to the length of
+the metadata, and the CRC32 is calculated on the data up to that
+length.
+
+(Note: The same timestamp, nanosecond, length, and CRC MDA values must
+be used when writing the same metadata to all blockdevs in a
+froyodev. Other fields within the sig block may vary, as may which
+MDA slot is being updated, if not all blockdevs were added at the same
+time.)
 
 Third, the sig block's CRC32 is calculated.
 
