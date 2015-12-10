@@ -34,24 +34,25 @@ All values little-endian.
 |108     |4       |MDAB used length in bytes (u32)
 |112     |4       |MDAB CRC32
 |116     |12      |unused
-|128     |384     |unused
+|128     |32      |Hex UUID for the associated Froyodev
+|160     |352     |unused
 
 All "flags" or "unused" ranges are zeroed.
 
 Data within the metadata areas is stored in JSON format.
 
-Froyo uses a hybrid of the models used by LVM and ZFS
-metadata. Metadata updates write to the older of the MDAA and MDAB
-areas. This is determined by lowest timestamp, and then lowest serial
-if timestamps are equal.
+Metadata updates write to the older of the MDAA and MDAB areas. This
+is determined by lowest timestamp, and then lowest serial if
+timestamps are equal.
 
 First, the JSON metadata is written to either MDAA or MDAB, as
 determined above, in both zones.
 
 Second, the chosen MDA's timestamp, serial, length, and CRC fields are
-updated: timestamp gets the UNIX timestamp, serial is incremented,
-length is set to the length of the metadata, and the CRC32 is
-calculated on the data up to that length.
+updated: timestamp gets the UNIX timestamp. If the other MDA has the
+same timestamp, serial is one more than the other MDA's
+serial. Otherwise serial is zero.  Length is set to the length of the
+metadata, and the CRC32 is calculated on the data up to that length.
 
 Third, the sig block's CRC32 is calculated.
 

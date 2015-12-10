@@ -202,6 +202,7 @@ struct MDA {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BlockDev {
+    froyodev_id: String,
     #[serde(skip_serializing)]
     dev: Device,
     id: String,
@@ -260,8 +261,10 @@ impl BlockDev {
         let sectors = Sectors(try!(blkdev_size(&f)) / SECTOR_SIZE);
 
         let id = from_utf8(&buf[32..64]).unwrap();
+        let froyodev_id = from_utf8(&buf[128..160]).unwrap();
 
         Ok(BlockDev {
+            froyodev_id: froyodev_id.to_owned(),
             id: id.to_owned(),
             dev: dev,
             path: path.to_owned(),
@@ -284,7 +287,7 @@ impl BlockDev {
         })
     }
 
-    fn initialize(path: &Path, force: bool) -> io::Result<BlockDev> {
+    fn initialize(froyodev_id: &str, path: &Path, force: bool) -> io::Result<BlockDev> {
         let pstat = match stat::stat(path) {
             Err(_) => return Err(io::Error::new(
                 ErrorKind::NotFound,
@@ -332,6 +335,7 @@ impl BlockDev {
         }
 
         let mut bd = BlockDev {
+            froyodev_id: froyodev_id.to_owned(),
             id: Uuid::new_v4().to_simple_string(),
             dev: dev,
             path: path.to_owned(),
@@ -496,6 +500,8 @@ impl BlockDev {
         LittleEndian::write_u32(&mut buf[104..108], self.mdab.serial);
         LittleEndian::write_u32(&mut buf[108..112], self.mdab.length,);
         LittleEndian::write_u32(&mut buf[112..116], self.mdab.crc);
+
+        buf[128..160].clone_from_slice(self.froyodev_id.as_bytes());
 
         // All done, calc CRC and write
         let hdr_crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
@@ -890,6 +896,7 @@ impl ThinDev {
 
 #[derive(Debug)]
 pub struct Froyo {
+    id: String,
     name: String,
     block_devs: Vec<Rc<RefCell<BlockDev>>>,
     linear_devs: Vec<Rc<RefCell<LinearDev>>>,
@@ -965,6 +972,7 @@ impl<'a> serde::ser::MapVisitor for FroyoVisitor<'a> {
 impl Froyo {
     fn new(name: &str) -> Froyo {
         Froyo {
+            id: Uuid::new_v4().to_simple_string(),
             name: name.to_owned(),
             block_devs: Vec::new(),
             linear_devs: Vec::new(),
@@ -1168,7 +1176,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
     let mut froyo = Froyo::new(name);
 
     for pathbuf in dev_paths {
-        let bd = try!(BlockDev::initialize(&pathbuf, args.is_present("force")));
+        let bd = try!(BlockDev::initialize(&froyo.id, &pathbuf, args.is_present("force")));
         try!(froyo.add_blockdev(bd));
     }
 
