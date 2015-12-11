@@ -803,9 +803,12 @@ impl ThinPoolDev {
     }
 }
 
-type ThinDevSave = ThinDev;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct ThinDevSave {
+    thin_number: u32,
+}
+
+#[derive(Debug, Clone)]
 struct ThinDev {
     dev: Device,
     thin_number: u32,
@@ -839,7 +842,9 @@ impl ThinDev {
     }
 
     fn to_save(&self) -> ThinDevSave {
-        self.clone()
+        ThinDevSave {
+            thin_number: self.thin_number,
+        }
     }
 }
 
