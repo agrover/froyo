@@ -69,6 +69,15 @@ impl serde::Serialize for Sectors {
     }
 }
 
+impl serde::Deserialize for Sectors {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Sectors, D::Error>
+        where D: serde::de::Deserializer
+    {
+        let val = try!(serde::Deserialize::deserialize(deserializer));
+        Ok(Sectors(val))
+    }
+}
+
 custom_derive! {
     #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
@@ -89,6 +98,16 @@ impl serde::Serialize for SectorOffset {
         serializer.visit_u64(**self)
     }
 }
+
+impl serde::Deserialize for SectorOffset {
+    fn deserialize<D>(deserializer: &mut D) -> Result<SectorOffset, D::Error>
+        where D: serde::de::Deserializer
+    {
+        let val = try!(serde::Deserialize::deserialize(deserializer));
+        Ok(SectorOffset(val))
+    }
+}
+
 
 const SECTOR_SIZE: u64 = 512;
 const HEADER_SIZE: u64 = 512;
@@ -200,37 +219,28 @@ struct MDA {
     offset: SectorOffset,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockDevSave {
+    id: String,
+    path: PathBuf,
+    sectors: Sectors,
+}
+
+#[derive(Debug, Clone)]
 pub struct BlockDev {
     froyodev_id: String,
-    #[serde(skip_serializing)]
     dev: Device,
     id: String,
     path: PathBuf,
     sectors: Sectors,
-    #[serde(skip_serializing)]
     mdaa: MDA,
-    #[serde(skip_serializing)]
     mdab: MDA,
-    #[serde(skip_serializing)]
     linear_devs: Vec<Rc<RefCell<LinearDev>>>,
 }
 
 impl BlockDev {
     pub fn new(path: &Path) -> io::Result<BlockDev> {
-        let dev = match Device::from_str(&path.to_string_lossy()) {
-            Ok(x) => x,
-            Err(_) => return Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("{} is not a block device", path.display())))
-        };
-
-        match stat::stat(path) {
-            Err(_) => return Err(io::Error::new(
-                ErrorKind::NotFound,
-                format!("{} not found", path.display()))),
-            Ok(x) => x,
-        };
+        let dev = try!(Device::from_str(&path.to_string_lossy()));
 
         let mut f = match OpenOptions::new().read(true).open(path) {
             Err(_) => {
@@ -360,6 +370,23 @@ impl BlockDev {
         try!(bd.write_mda_header());
 
         Ok(bd)
+    }
+
+    fn to_save(&self) -> BlockDevSave {
+        BlockDevSave {
+            id: self.id.clone(),
+            path: self.path.clone(),
+            sectors: self.sectors,
+        }
+    }
+
+    fn find_all() -> Result<Vec<BlockDev>, FroyoError> {
+        Ok(try!(read_dir("/dev"))
+            .into_iter()
+            .filter_map(|dir_e| if dir_e.is_ok()
+                        { Some(dir_e.unwrap().path()) } else { None } )
+            .filter_map(|path| { BlockDev::new(&path).ok() })
+            .collect::<Vec<_>>())
     }
 
     fn used_areas(&self) -> Vec<(SectorOffset, Sectors)> {
@@ -503,6 +530,13 @@ impl BlockDev {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LinearDevSave {
+    id: String,
+    start: SectorOffset,
+    length: Sectors,
+}
+
 #[derive(Debug, Clone)]
 pub struct LinearDev {
     id: String,
@@ -510,51 +544,6 @@ pub struct LinearDev {
     start: SectorOffset,
     length: Sectors,
     parent: Rc<RefCell<BlockDev>>,
-}
-
-impl serde::Serialize for LinearDev {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
-        where S: serde::Serializer
-    {
-        serializer.visit_struct("LinearDev", LinearDevVisitor {
-            value: self,
-            state: 0,
-        })
-    }
-}
-
-struct LinearDevVisitor<'a> {
-    value: &'a LinearDev,
-    state: u8,
-}
-
-impl<'a> serde::ser::MapVisitor for LinearDevVisitor<'a> {
-    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
-        where S: serde::Serializer
-    {
-        match self.state {
-            0 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("id", &self.value.id))))
-            }
-            1 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("start", &self.value.start))))
-            }
-            2 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
-            }
-            3 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt(
-                    "parent", &self.value.parent.borrow().id))))
-            }
-            _ => {
-                Ok(None)
-            }
-        }
-    }
 }
 
 impl LinearDev {
@@ -582,6 +571,24 @@ impl LinearDev {
             parent: blockdev.clone(),
         })
     }
+
+    fn to_save(&self) -> LinearDevSave {
+        LinearDevSave {
+            id: self.id.clone(),
+            start: self.start,
+            length: self.length,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RaidDevSave {
+    id: String,
+    stripe_sectors: Sectors,
+    region_sectors: Sectors,
+    length: Sectors,
+    // (meta dev, data dev)
+    members: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -593,61 +600,6 @@ pub struct RaidDev {
     length: Sectors,
     // (meta dev, data dev)
     members: Vec<(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)>,
-}
-
-impl serde::Serialize for RaidDev {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
-        where S: serde::Serializer
-    {
-        serializer.visit_struct("RaidDev", RaidDevVisitor {
-            value: self,
-            state: 0,
-        })
-    }
-}
-
-struct RaidDevVisitor<'a> {
-    value: &'a RaidDev,
-    state: u8,
-}
-
-impl<'a> serde::ser::MapVisitor for RaidDevVisitor<'a> {
-    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
-        where S: serde::Serializer
-    {
-        match self.state {
-            0 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("id", &self.value.id))))
-            }
-            1 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt(
-                    "stripe_sectors", &self.value.stripe_sectors))))
-            }
-            2 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt(
-                    "region_sectors", &self.value.region_sectors))))
-            }
-            3 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
-            }
-            4 => {
-                self.state += 1;
-                // Just serialize ids of members
-                let ids: Vec<_> = self.value.members.iter()
-                    .map(|&(ref x, ref y)|
-                         (x.borrow().id.clone(), y.borrow().id.clone()))
-                    .collect();
-                Ok(Some(try!(serializer.visit_struct_elt("members", &ids))))
-            }
-            _ => {
-                Ok(None)
-            }
-        }
-    }
 }
 
 impl RaidDev {
@@ -690,6 +642,25 @@ impl RaidDev {
             members: devs.to_vec(),
         })
     }
+
+    fn to_save(&self) -> RaidDevSave {
+        RaidDevSave {
+            id: self.id.clone(),
+            stripe_sectors: self.stripe_sectors,
+            region_sectors: self.region_sectors,
+            length: self.length,
+            members: self.members.iter()
+                .map(|&(ref x, ref y)| (x.borrow().id.clone(), y.borrow().id.clone()))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SegmentSave {
+    start: SectorOffset,
+    length: Sectors,
+    parent: String,  // RaidDev id
 }
 
 #[derive(Debug, Clone)]
@@ -699,52 +670,25 @@ struct Segment {
     parent: Rc<RefCell<RaidDev>>,
 }
 
-impl serde::Serialize for Segment {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
-        where S: serde::Serializer
-    {
-        serializer.visit_struct("Segment", SegmentVisitor {
-            value: self,
-            state: 0,
-        })
-    }
-}
-
-struct SegmentVisitor<'a> {
-    value: &'a Segment,
-    state: u8,
-}
-
-impl<'a> serde::ser::MapVisitor for SegmentVisitor<'a> {
-    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
-        where S: serde::Serializer
-    {
-        match self.state {
-            0 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("start", &self.value.start))))
-            }
-            1 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("length", &self.value.length))))
-            }
-            2 => {
-                self.state += 1;
-                // Just serialize id of parent
-                Ok(Some(try!(serializer.visit_struct_elt(
-                    "parent", &self.value.parent.borrow().id))))
-            }
-            _ => {
-                Ok(None)
-            }
+impl Segment {
+    fn to_save(&self) -> SegmentSave {
+        SegmentSave {
+            start: self.start,
+            length: self.length,
+            parent: self.parent.borrow().id.clone(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RaidLinearDevSave {
+    id: String,
+    segments: Vec<SegmentSave>,
+}
+
+#[derive(Debug, Clone)]
 pub struct RaidLinearDev {
     id: String,
-    #[serde(skip_serializing)]
     dev: Device,
     segments: Vec<Segment>,
 }
@@ -778,9 +722,24 @@ impl RaidLinearDev {
             segments: vec![segment],
         })
     }
+
+    fn to_save(&self) -> RaidLinearDevSave {
+        RaidLinearDevSave {
+            id: self.id.clone(),
+            segments: self.segments.iter()
+                .map(|x| x.to_save())
+                .collect()
+        }
+    }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ThinPoolDevSave {
+    meta_dev: RaidLinearDevSave,
+    data_dev: RaidLinearDevSave,
+}
+
+#[derive(Debug, Clone)]
 struct ThinPoolDev {
     dm_name: String,
     dev: Device,
@@ -835,9 +794,18 @@ impl ThinPoolDev {
             data_dev: data_raid_dev,
         })
     }
+
+    fn to_save(&self) -> ThinPoolDevSave {
+        ThinPoolDevSave {
+            meta_dev: self.meta_dev.to_save(),
+            data_dev: self.data_dev.to_save(),
+        }
+    }
 }
 
-#[derive(Debug, Serialize)]
+type ThinDevSave = ThinDev;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ThinDev {
     dev: Device,
     thin_number: u32,
@@ -869,9 +837,23 @@ impl ThinDev {
             thin_number: thin_number,
         })
     }
+
+    fn to_save(&self) -> ThinDevSave {
+        self.clone()
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FroyoSave {
+    name: String,
+    block_devs: Vec<BlockDevSave>,
+    linear_devs: Vec<LinearDevSave>,
+    raid_devs: Vec<RaidDevSave>,
+    thin_pool_dev: Option<ThinPoolDevSave>,
+    thin_devs: Vec<ThinDevSave>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Froyo {
     id: String,
     name: String,
@@ -880,70 +862,6 @@ pub struct Froyo {
     raid_devs: Vec<Rc<RefCell<RaidDev>>>,
     thin_pool_dev: Option<ThinPoolDev>,
     thin_devs: Vec<ThinDev>,
-}
-
-impl serde::Serialize for Froyo {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
-        where S: serde::Serializer
-    {
-        serializer.visit_struct("Froyo", FroyoVisitor {
-            value: self,
-            state: 0,
-        })
-    }
-}
-
-struct FroyoVisitor<'a> {
-    value: &'a Froyo,
-    state: u8,
-}
-
-impl<'a> serde::ser::MapVisitor for FroyoVisitor<'a> {
-    fn visit<S>(&mut self, serializer: &mut S) -> Result<Option<()>, S::Error>
-        where S: serde::Serializer
-    {
-        match self.state {
-            0 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt("name", &self.value.name))))
-            }
-            1 => {
-                self.state += 1;
-                let ids: Vec<_> = self.value.block_devs.iter()
-                    .map(|x| x.borrow().clone())
-                    .collect();
-                Ok(Some(try!(serializer.visit_struct_elt("block_devs", &ids))))
-            }
-            2 => {
-                self.state += 1;
-                let ids: Vec<_> = self.value.linear_devs.iter()
-                    .map(|x| x.borrow().clone())
-                    .collect();
-                Ok(Some(try!(serializer.visit_struct_elt("linear_devs", &ids))))
-            }
-            3 => {
-                self.state += 1;
-                let ids: Vec<_> = self.value.raid_devs.iter()
-                    .map(|x| x.borrow().clone())
-                    .collect();
-                Ok(Some(try!(serializer.visit_struct_elt("raid_devs", &ids))))
-            }
-            4 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt(
-                    "thinpool_dev", &self.value.thin_pool_dev))))
-            }
-            5 => {
-                self.state += 1;
-                Ok(Some(try!(serializer.visit_struct_elt(
-                    "thin_devs", &self.value.thin_devs))))
-            }
-
-            _ => {
-                Ok(None)
-            }
-        }
-    }
 }
 
 impl Froyo {
@@ -959,33 +877,61 @@ impl Froyo {
         }
     }
 
-    fn find_all() -> io::Result<Vec<Froyo>> {
-        let froyo_bdevs = try!(read_dir("/dev"))
-            .into_iter()
-            .filter_map(|dir_e| if dir_e.is_ok()
-                        { Some(dir_e.unwrap().path()) } else {None} )
-            .filter(|path| {
-                (stat::stat(path).unwrap().st_mode & 0x6000) == 0x6000 }) // S_IFBLK
-            .filter_map(|path| { BlockDev::new(&path).ok() })
-            .collect::<Vec<_>>();
+    fn to_save(&self) -> FroyoSave {
+        FroyoSave {
+            name: self.name.to_owned(),
+            block_devs: self.block_devs.iter()
+                .map(|x| x.borrow().to_save())
+                .collect(),
+            linear_devs: self.linear_devs.iter()
+                .map(|x| x.borrow().to_save())
+                .collect(),
+            raid_devs: self.raid_devs.iter()
+                .map(|x| x.borrow().to_save())
+                .collect(),
+            thin_pool_dev: self.thin_pool_dev.as_ref().map(|x| x.to_save()),
+            thin_devs: self.thin_devs.iter()
+                .map(|x| x.to_save())
+                .collect(),
+        }
+    }
 
-        let lst: BTreeMap<String, Vec<BlockDev>> = BTreeMap::new();
-
-        for bd in froyo_bdevs {
-
-            let b = try!(bd.read_mdax());
-            println!("metadata {}", String::from_utf8_lossy(&b));
-
-            // lst.entry(bd.id.clone())
-            //     .or_insert(Vec::new())
-            //     .push(bd);
+    fn find_all() -> Result<Vec<Froyo>, FroyoError> {
+        // We could have BlockDevs for multiple Froyodevs.
+        // Group them by Froyo uuid.
+        let mut froyo_devs = BTreeMap::new();
+        for bd in try!(BlockDev::find_all()) {
+            froyo_devs.entry(bd.froyodev_id.clone())
+                .or_insert(Vec::new())
+                .push(bd);
         }
 
-        println!("sup {:?}", lst.len());
+        let mut froyo_saves = Vec::new();
+        for (_, fd) in froyo_devs {
+            // get newest metadata across all blockdevs and in either MDA
+            let newest_bd = fd.iter()
+                .map(|bd| {
+                    let mda = match bd.mdaa.last_updated.cmp(&bd.mdab.last_updated) {
+                        Ordering::Less => &bd.mdab,
+                        Ordering::Greater => &bd.mdaa,
+                        Ordering::Equal => &bd.mdab,
+                    };
+                    (mda.last_updated, bd)
+                })
+                .max_by_key(|&(tm, _)| tm)
+                .unwrap().1;
 
-        // TODO: build froyodevs out of collected blockdevs.
+            let buf = try!(newest_bd.read_mdax());
+            let s = String::from_utf8_lossy(&buf).into_owned();
+            println!("metadata {}", s);
 
-        Ok(vec![Froyo::new("ss")])
+            froyo_saves.push(try!(serde_json::from_str(&s)));
+        }
+
+        let froyos = Vec::new();
+        // TODO: build froyodevs out of collected blockdevs and froyosaves
+
+        Ok(froyos)
     }
 
     // Try to make an as-large-as-possible redundant device from the
@@ -1098,7 +1044,8 @@ impl Froyo {
     }
 
     fn save_state(&self) -> Result<(), FroyoError> {
-        let metadata = try!(serde_json::to_string(self));
+        let froyo_info = self.to_save();
+        let metadata = try!(serde_json::to_string(&froyo_info));
         let current_time = time::now().to_timespec();
 
         for bd in &self.block_devs {
@@ -1168,7 +1115,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
 
     try!(froyo.save_state());
 
-    println!("froyojson {}", try!(serde_json::to_string_pretty(&froyo)));
+    dbgp!("Froyodev {} created", froyo.name);
 
     Ok(())
 }
