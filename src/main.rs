@@ -108,6 +108,7 @@ impl serde::Deserialize for SectorOffset {
     }
 }
 
+const FROYO_REDUNDANCY: usize = 1;
 
 const SECTOR_SIZE: u64 = 512;
 const HEADER_SIZE: u64 = 512;
@@ -221,7 +222,6 @@ struct MDA {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockDevSave {
-    id: String,
     path: PathBuf,
     sectors: Sectors,
 }
@@ -374,7 +374,6 @@ impl BlockDev {
 
     fn to_save(&self) -> BlockDevSave {
         BlockDevSave {
-            id: self.id.clone(),
             path: self.path.clone(),
             sectors: self.sectors,
         }
@@ -851,7 +850,7 @@ impl ThinDev {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FroyoSave {
     name: String,
-    block_devs: Vec<BlockDevSave>,
+    block_devs: BTreeMap<String, BlockDevSave>,
     linear_devs: Vec<LinearDevSave>,
     raid_devs: Vec<RaidDevSave>,
     thin_pool_dev: Option<ThinPoolDevSave>,
@@ -886,7 +885,7 @@ impl Froyo {
         FroyoSave {
             name: self.name.to_owned(),
             block_devs: self.block_devs.iter()
-                .map(|x| x.borrow().to_save())
+                .map(|x| (x.borrow().id.clone(), x.borrow().to_save()))
                 .collect(),
             linear_devs: self.linear_devs.iter()
                 .map(|x| x.borrow().to_save())
@@ -911,10 +910,10 @@ impl Froyo {
                 .push(bd);
         }
 
-        let mut froyo_saves = Vec::new();
-        for (_, fd) in froyo_devs {
+        let mut froyos = Vec::new();
+        for (_, bds) in froyo_devs {
             // get newest metadata across all blockdevs and in either MDA
-            let newest_bd = fd.iter()
+            let newest_bd = bds.iter()
                 .map(|bd| {
                     let mda = match bd.mdaa.last_updated.cmp(&bd.mdab.last_updated) {
                         Ordering::Less => &bd.mdab,
@@ -929,13 +928,46 @@ impl Froyo {
             let buf = try!(newest_bd.read_mdax());
             let s = String::from_utf8_lossy(&buf).into_owned();
 
-            froyo_saves.push(try!(serde_json::from_str::<FroyoSave>(&s)));
+            let froyo_save = try!(serde_json::from_str::<FroyoSave>(&s));
+
+            froyos.push(try!(Froyo::from_save(&froyo_save, &bds)));
         }
 
-        let froyos = Vec::new();
-        // TODO: build froyodevs out of collected blockdevs and froyosaves
-
         Ok(froyos)
+    }
+
+    fn from_save(froyo_save: &FroyoSave, blockdevs: &[BlockDev]) -> io::Result<Froyo> {
+        let mut froyo = Froyo::new(&froyo_save.name);
+
+        let mut bd_map: BTreeMap<&String, &BlockDev> = blockdevs.iter()
+            .map(|x| (&x.id, x))
+            .collect();
+
+        for (id, sbd) in &froyo_save.block_devs {
+            match bd_map.remove(id) {
+                Some(x) => froyo.block_devs.push(Rc::new(RefCell::new(x.clone()))),
+                None => println!("missing a blockdev: id {} path {}", id,
+                                 sbd.path.display()),
+            }
+        }
+
+        for (_, bd) in bd_map {
+            dbgp!("{} header indicates it's part of {} but not found in metadata",
+                  bd.path.display(), froyo.name);
+        }
+
+        match froyo_save.block_devs.len() - froyo.block_devs.len() {
+            0 => dbgp!("All {} block devices found for {}",
+                       froyo.block_devs.len(), froyo.name),
+            num @ 1...FROYO_REDUNDANCY => dbgp!("Missing {} of {} drives from {}, can continue",
+                                                num, froyo_save.block_devs.len(), froyo.name),
+            num @ _ => return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} of {} devices missing from {}",
+                        num, froyo_save.block_devs.len(), froyo.name))),
+        }
+
+        Ok(froyo)
     }
 
     // Try to make an as-large-as-possible redundant device from the
@@ -1061,7 +1093,11 @@ impl Froyo {
 }
 
 fn list(_args: &ArgMatches) -> Result<(), FroyoError> {
-    try!(Froyo::find_all());
+    let froyos = try!(Froyo::find_all());
+    for f in &froyos {
+        println!("{}", f.name);
+    }
+
     Ok(())
 }
 
