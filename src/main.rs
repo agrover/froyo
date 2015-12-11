@@ -928,9 +928,8 @@ impl Froyo {
 
             let buf = try!(newest_bd.read_mdax());
             let s = String::from_utf8_lossy(&buf).into_owned();
-            println!("metadata {}", s);
 
-            froyo_saves.push(try!(serde_json::from_str(&s)));
+            froyo_saves.push(try!(serde_json::from_str::<FroyoSave>(&s)));
         }
 
         let froyos = Vec::new();
