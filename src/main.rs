@@ -397,7 +397,8 @@ impl BlockDev {
 
         for dev in &self.linear_devs {
             let dev = dev.borrow();
-            used.push((dev.start, dev.length))
+            used.push((dev.meta_start, dev.meta_length));
+            used.push((dev.data_start, dev.data_length));
         }
         used.sort();
 
@@ -532,41 +533,73 @@ impl BlockDev {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LinearDevSave {
     id: String,
-    start: SectorOffset,
-    length: Sectors,
+    meta_start: SectorOffset,
+    meta_length: Sectors,
+    data_start: SectorOffset,
+    data_length: Sectors,
+    parent: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct LinearDev {
     id: String,
-    dev: Device,
-    start: SectorOffset,
-    length: Sectors,
+    meta_dev: Device,
+    meta_start: SectorOffset,
+    meta_length: Sectors,
+    data_dev: Device,
+    data_start: SectorOffset,
+    data_length: Sectors,
     parent: Rc<RefCell<BlockDev>>,
 }
 
 impl LinearDev {
-    fn create(dm: &DM, name: &str, blockdev: &Rc<RefCell<BlockDev>>, start: SectorOffset, len: Sectors)
-              -> io::Result<LinearDev> {
+    fn create(
+        dm: &DM,
+        name: &str,
+        id: &str,
+        blockdev: &Rc<RefCell<BlockDev>>,
+        meta_start: SectorOffset,
+        meta_len: Sectors,
+        data_start: SectorOffset,
+        data_len: Sectors)
+        -> io::Result<LinearDev> {
 
         let dev = blockdev.borrow().dev;
+
+        // meta
         let params = format!("{}:{} {}",
-                             dev.major, dev.minor, *start);
-        let table = (0u64, *len, "linear", params.as_ref());
+                             dev.major, dev.minor, *meta_start);
+        let table = (0u64, *meta_len, "linear", params.as_ref());
 
         let dm_name = format!("froyo-linear-{}", name);
 
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let di = try!(dm.table_load(&dm_name, &vec![table][..]));
+        let meta_di = try!(dm.table_load(&dm_name, &vec![table][..]));
+        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
+
+        dbgp!("Created {}", dm_name);
+
+        // data
+        let params = format!("{}:{} {}",
+                             dev.major, dev.minor, *data_start);
+        let table = (0u64, *data_len, "linear", params.as_ref());
+
+        let dm_name = format!("froyo-linear-{}", name);
+
+        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
+        let data_di = try!(dm.table_load(&dm_name, &vec![table][..]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
         dbgp!("Created {}", dm_name);
 
         Ok(LinearDev{
-            id: Uuid::new_v4().to_simple_string(),
-            dev: di.device(),
-            start: start,
-            length: len,
+            id: id.to_owned(),
+            meta_dev: meta_di.device(),
+            meta_start: meta_start,
+            meta_length: meta_len,
+            data_dev: data_di.device(),
+            data_start: data_start,
+            data_length: data_len,
             parent: blockdev.clone(),
         })
     }
@@ -574,8 +607,11 @@ impl LinearDev {
     fn to_save(&self) -> LinearDevSave {
         LinearDevSave {
             id: self.id.clone(),
-            start: self.start,
-            length: self.length,
+            meta_start: self.meta_start,
+            meta_length: self.meta_length,
+            data_start: self.data_start,
+            data_length: self.data_length,
+            parent: self.parent.borrow().id.clone(),
         }
     }
 }
@@ -586,8 +622,7 @@ struct RaidDevSave {
     stripe_sectors: Sectors,
     region_sectors: Sectors,
     length: Sectors,
-    // (meta dev, data dev)
-    members: Vec<(String, String)>,
+    members: Vec<LinearDevSave>,
 }
 
 #[derive(Debug, Clone)]
@@ -597,24 +632,23 @@ pub struct RaidDev {
     stripe_sectors: Sectors,
     region_sectors: Sectors,
     length: Sectors,
-    // (meta dev, data dev)
-    members: Vec<(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)>,
+    members: Vec<Rc<RefCell<LinearDev>>>,
 }
 
 impl RaidDev {
-    fn create(dm: &DM, name: &str, devs: &[(Rc<RefCell<LinearDev>>, Rc<RefCell<LinearDev>>)],
+    fn create(dm: &DM, name: &str, devs: &[Rc<RefCell<LinearDev>>],
               stripe: Sectors, region: Sectors)
               -> io::Result<RaidDev> {
 
         let raid_texts: Vec<_> = devs.iter()
-            .map(|&(ref meta, ref data)| format!("{}:{} {}:{}",
-                                          meta.borrow().dev.major, meta.borrow().dev.minor,
-                                          data.borrow().dev.major, data.borrow().dev.minor))
+            .map(|dev| format!("{}:{} {}:{}",
+                               dev.borrow().meta_dev.major, dev.borrow().meta_dev.minor,
+                               dev.borrow().data_dev.major, dev.borrow().data_dev.minor))
             .collect();
 
-        // skip 1 dev to account for parity
-        let target_length = devs.iter().skip(1)
-            .map(|&(_, ref data)| data.borrow().length)
+        // skip to account for parity devs
+        let target_length = devs.iter().skip(FROYO_REDUNDANCY)
+            .map(|dev| dev.borrow().data_length)
             .sum::<Sectors>();
 
         let params = format!("raid5_ls 3 {} region_size {} {} {}",
@@ -649,7 +683,7 @@ impl RaidDev {
             region_sectors: self.region_sectors,
             length: self.length,
             members: self.members.iter()
-                .map(|&(ref x, ref y)| (x.borrow().id.clone(), y.borrow().id.clone()))
+                .map(|dev| dev.borrow().to_save())
                 .collect(),
         }
     }
@@ -852,7 +886,6 @@ struct FroyoSave {
     name: String,
     id: String,
     block_devs: BTreeMap<String, BlockDevSave>,
-    linear_devs: Vec<LinearDevSave>,
     raid_devs: Vec<RaidDevSave>,
     thin_pool_dev: Option<ThinPoolDevSave>,
     thin_devs: Vec<ThinDevSave>,
@@ -863,7 +896,6 @@ pub struct Froyo {
     id: String,
     name: String,
     block_devs: BTreeMap<String, Rc<RefCell<BlockDev>>>,
-    linear_devs: Vec<Rc<RefCell<LinearDev>>>,
     raid_devs: Vec<Rc<RefCell<RaidDev>>>,
     thin_pool_dev: Option<ThinPoolDev>,
     thin_devs: Vec<ThinDev>,
@@ -875,7 +907,6 @@ impl Froyo {
             id: id.to_owned(),
             name: name.to_owned(),
             block_devs: BTreeMap::new(),
-            linear_devs: Vec::new(),
             raid_devs: Vec::new(),
             thin_pool_dev: None,
             thin_devs: Vec::new(),
@@ -888,9 +919,6 @@ impl Froyo {
             id: self.id.to_owned(),
             block_devs: self.block_devs.iter()
                 .map(|(id, bd)| (id.clone(), bd.borrow().to_save()))
-                .collect(),
-            linear_devs: self.linear_devs.iter()
-                .map(|x| x.borrow().to_save())
                 .collect(),
             raid_devs: self.raid_devs.iter()
                 .map(|x| x.borrow().to_save())
@@ -974,8 +1002,34 @@ impl Froyo {
                         num, froyo_save.block_devs.len(), froyo.name))),
         }
 
-        for ld in &froyo_save.linear_devs {
-            // do stuff
+        let dm = try!(DM::new());
+
+        for (num, srd) in froyo_save.raid_devs.iter().enumerate() {
+            let mut linear_devs = Vec::new();
+            for (num, sld) in srd.members.iter().enumerate() {
+                match froyo.block_devs.get(&sld.parent) {
+                    Some(bd) => {
+                        let ld = Rc::new(RefCell::new(try!(LinearDev::create(
+                            &dm, &format!("{}-meta-{}", froyo.name, num),
+                            &sld.id, bd, sld.meta_start, sld.meta_length,
+                            sld.data_start, sld.data_length))));
+
+                        bd.borrow_mut().linear_devs.push(ld.clone());
+                        linear_devs.push(ld);
+                    },
+                    None => dbgp!("could not find parent for linear device {}", sld.id),
+                }
+            }
+
+            // TODO: handle when devs is less than what's in srd
+            let rd = Rc::new(RefCell::new(try!(RaidDev::create(
+                &dm,
+                &format!("{}-{}", froyo.name, num),
+                &linear_devs[..],
+                srd.stripe_sectors,
+                srd.region_sectors))));
+
+            froyo.raid_devs.push(rd);
         }
 
         Ok(froyo)
@@ -1032,36 +1086,29 @@ impl Froyo {
 
         let raid_num = self.raid_devs.len();
 
-        let mut linear_dev_pairs = Vec::new();
+        let mut linear_devs = Vec::new();
         for (num, &mut(ref mut bd, (sector_start, _))) in bd_areas.iter_mut().enumerate() {
             let mdata_sector_start = sector_start;
             let data_sector_start = SectorOffset(*mdata_sector_start + *mdata_sectors);
 
-            let meta = Rc::new(RefCell::new(try!(LinearDev::create(
+            let linear = Rc::new(RefCell::new(try!(LinearDev::create(
                 &dm,
+                &Uuid::new_v4().to_simple_string(),
                 &format!("{}-meta-{}-{}", self.name, raid_num, num),
                 bd,
                 mdata_sector_start,
-                mdata_sectors))));
-            bd.borrow_mut().linear_devs.push(meta.clone());
-            self.linear_devs.push(meta.clone());
-
-            let data = Rc::new(RefCell::new(try!(LinearDev::create(
-                &dm,
-                &format!("{}-data-{}-{}", self.name, raid_num, num),
-                bd,
+                mdata_sectors,
                 data_sector_start,
                 data_sectors))));
-            bd.borrow_mut().linear_devs.push(data.clone());
-            self.linear_devs.push(data.clone());
+            bd.borrow_mut().linear_devs.push(linear.clone());
 
-            linear_dev_pairs.push((meta, data));
+            linear_devs.push(linear);
         }
 
         let raid = try!(RaidDev::create(
             &dm,
             &format!("{}-{}", self.name, raid_num),
-            &linear_dev_pairs[..],
+            &linear_devs[..],
             STRIPE_SECTORS,
             region_sectors));
 
