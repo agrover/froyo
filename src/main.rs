@@ -861,7 +861,7 @@ struct FroyoSave {
 pub struct Froyo {
     id: String,
     name: String,
-    block_devs: Vec<Rc<RefCell<BlockDev>>>,
+    block_devs: BTreeMap<String, Rc<RefCell<BlockDev>>>,
     linear_devs: Vec<Rc<RefCell<LinearDev>>>,
     raid_devs: Vec<Rc<RefCell<RaidDev>>>,
     thin_pool_dev: Option<ThinPoolDev>,
@@ -873,7 +873,7 @@ impl Froyo {
         Froyo {
             id: Uuid::new_v4().to_simple_string(),
             name: name.to_owned(),
-            block_devs: Vec::new(),
+            block_devs: BTreeMap::new(),
             linear_devs: Vec::new(),
             raid_devs: Vec::new(),
             thin_pool_dev: None,
@@ -885,7 +885,7 @@ impl Froyo {
         FroyoSave {
             name: self.name.to_owned(),
             block_devs: self.block_devs.iter()
-                .map(|x| (x.borrow().id.clone(), x.borrow().to_save()))
+                .map(|(id, bd)| (id.clone(), bd.borrow().to_save()))
                 .collect(),
             linear_devs: self.linear_devs.iter()
                 .map(|x| x.borrow().to_save())
@@ -945,9 +945,14 @@ impl Froyo {
 
         for (id, sbd) in &froyo_save.block_devs {
             match bd_map.remove(id) {
-                Some(x) => froyo.block_devs.push(Rc::new(RefCell::new(x.clone()))),
-                None => println!("missing a blockdev: id {} path {}", id,
-                                 sbd.path.display()),
+                Some(x) => {
+                    if froyo.block_devs.insert(
+                        id.clone(), Rc::new(RefCell::new(x.clone()))).is_some() {
+                        panic!("should never happen")
+                    }
+                },
+                None => dbgp!("missing a blockdev: id {} path {}", id,
+                              sbd.path.display()),
             }
         }
 
@@ -979,7 +984,7 @@ impl Froyo {
 
         // get common data area size, allowing for Froyo data at start and end
         let mut bd_areas: Vec<_> = self.block_devs.iter_mut()
-            .filter_map(|bd| {
+            .filter_map(|(_, bd)| {
                 match bd.borrow().largest_free_area() {
                     Some(x) => Some((bd.clone(), x)),
                     None => None,
@@ -1070,7 +1075,7 @@ impl Froyo {
     }
 
     fn add_blockdev(&mut self, bdev: BlockDev) -> Result<(), FroyoError> {
-        self.block_devs.push(Rc::new(RefCell::new(bdev)));
+        self.block_devs.insert(bdev.id.clone(), Rc::new(RefCell::new(bdev)));
 
         Ok(())
     }
@@ -1084,7 +1089,7 @@ impl Froyo {
         let metadata = try!(serde_json::to_string(&froyo_info));
         let current_time = time::now().to_timespec();
 
-        for bd in &self.block_devs {
+        for (_, bd) in &self.block_devs {
             try!(bd.borrow_mut().save_state(&current_time, metadata.as_bytes()))
         }
 
