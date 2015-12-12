@@ -850,6 +850,7 @@ impl ThinDev {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FroyoSave {
     name: String,
+    id: String,
     block_devs: BTreeMap<String, BlockDevSave>,
     linear_devs: Vec<LinearDevSave>,
     raid_devs: Vec<RaidDevSave>,
@@ -869,9 +870,9 @@ pub struct Froyo {
 }
 
 impl Froyo {
-    fn new(name: &str) -> Froyo {
+    fn new(name: &str, id: &str) -> Froyo {
         Froyo {
-            id: Uuid::new_v4().to_simple_string(),
+            id: id.to_owned(),
             name: name.to_owned(),
             block_devs: BTreeMap::new(),
             linear_devs: Vec::new(),
@@ -884,6 +885,7 @@ impl Froyo {
     fn to_save(&self) -> FroyoSave {
         FroyoSave {
             name: self.name.to_owned(),
+            id: self.id.to_owned(),
             block_devs: self.block_devs.iter()
                 .map(|(id, bd)| (id.clone(), bd.borrow().to_save()))
                 .collect(),
@@ -911,7 +913,7 @@ impl Froyo {
         }
 
         let mut froyos = Vec::new();
-        for (_, bds) in froyo_devs {
+        for (froyo_id, bds) in froyo_devs {
             // get newest metadata across all blockdevs and in either MDA
             let newest_bd = bds.iter()
                 .map(|bd| {
@@ -930,14 +932,14 @@ impl Froyo {
 
             let froyo_save = try!(serde_json::from_str::<FroyoSave>(&s));
 
-            froyos.push(try!(Froyo::from_save(&froyo_save, &bds)));
+            froyos.push(try!(Froyo::from_save(&froyo_save, &froyo_id, &bds)));
         }
 
         Ok(froyos)
     }
 
-    fn from_save(froyo_save: &FroyoSave, blockdevs: &[BlockDev]) -> io::Result<Froyo> {
-        let mut froyo = Froyo::new(&froyo_save.name);
+    fn from_save(froyo_save: &FroyoSave, froyo_id: &str, blockdevs: &[BlockDev]) -> io::Result<Froyo> {
+        let mut froyo = Froyo::new(&froyo_save.name, froyo_id);
 
         let mut bd_map: BTreeMap<&String, &BlockDev> = blockdevs.iter()
             .map(|x| (&x.id, x))
@@ -970,6 +972,10 @@ impl Froyo {
                 io::ErrorKind::InvalidInput,
                 format!("{} of {} devices missing from {}",
                         num, froyo_save.block_devs.len(), froyo.name))),
+        }
+
+        for ld in &froyo_save.linear_devs {
+            // do stuff
         }
 
         Ok(froyo)
@@ -1143,7 +1149,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
             format!("Max supported devices is 8, {} given", dev_paths.len()))))
     }
 
-    let mut froyo = Froyo::new(name);
+    let mut froyo = Froyo::new(name, &Uuid::new_v4().to_simple_string());
 
     for pathbuf in dev_paths {
         let bd = try!(BlockDev::initialize(&froyo.id, &pathbuf, args.is_present("force")));
