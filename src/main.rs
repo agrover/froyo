@@ -690,22 +690,22 @@ impl RaidDev {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SegmentSave {
+struct RaidSegmentSave {
     start: SectorOffset,
     length: Sectors,
     parent: String,  // RaidDev id
 }
 
 #[derive(Debug, Clone)]
-struct Segment {
+struct RaidSegment {
     start: SectorOffset,
     length: Sectors,
     parent: Rc<RefCell<RaidDev>>,
 }
 
-impl Segment {
-    fn to_save(&self) -> SegmentSave {
-        SegmentSave {
+impl RaidSegment {
+    fn to_save(&self) -> RaidSegmentSave {
+        RaidSegmentSave {
             start: self.start,
             length: self.length,
             parent: self.parent.borrow().id.clone(),
@@ -716,14 +716,14 @@ impl Segment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RaidLinearDevSave {
     id: String,
-    segments: Vec<SegmentSave>,
+    segments: Vec<RaidSegmentSave>,
 }
 
 #[derive(Debug, Clone)]
 pub struct RaidLinearDev {
     id: String,
     dev: Device,
-    segments: Vec<Segment>,
+    segments: Vec<RaidSegment>,
 }
 
 impl RaidLinearDev {
@@ -743,7 +743,7 @@ impl RaidLinearDev {
 
         dbgp!("Created {}", dm_name);
 
-        let segment = Segment {
+        let segment = RaidSegment {
             start: start,
             length: len,
             parent: parent.clone(),
