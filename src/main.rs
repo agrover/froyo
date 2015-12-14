@@ -696,8 +696,6 @@ impl RaidDev {
 
         let dm_name = format!("froyo-raid5-{}", name);
 
-        println!("blah {:?}", raid_table);
-
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
         let raid_di = try!(dm.table_load(&dm_name, &[raid_table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
@@ -877,12 +875,15 @@ impl ThinPoolDev {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ThinDevSave {
     thin_number: u32,
+    fs: String,
+    size: Sectors,
 }
 
 #[derive(Debug, Clone)]
 struct ThinDev {
     dev: Device,
     thin_number: u32,
+    size: Sectors,
 }
 
 impl ThinDev {
@@ -909,12 +910,15 @@ impl ThinDev {
         Ok(ThinDev {
             dev: thin_di.device(),
             thin_number: thin_number,
+            size: Sectors(thin_vol_sectors),
         })
     }
 
     fn to_save(&self) -> ThinDevSave {
         ThinDevSave {
             thin_number: self.thin_number,
+            fs: "xfs".to_string(),
+            size: self.size,
         }
     }
 }
