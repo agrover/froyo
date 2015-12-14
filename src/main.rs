@@ -397,8 +397,12 @@ impl BlockDev {
 
         for dev in &self.linear_devs {
             let dev = dev.borrow();
-            used.push((dev.meta_start, dev.meta_length));
-            used.push((dev.data_start, dev.data_length));
+            for seg in &dev.meta_segments {
+                used.push((seg.start, seg.length));
+            }
+            for seg in &dev.data_segments {
+                used.push((seg.start, seg.length));
+            }
         }
         used.sort();
 
@@ -531,12 +535,16 @@ impl BlockDev {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct LinearSegment {
+    start: SectorOffset,
+    length: Sectors,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LinearDevSave {
     id: String,
-    meta_start: SectorOffset,
-    meta_length: Sectors,
-    data_start: SectorOffset,
-    data_length: Sectors,
+    meta_segments: Vec<LinearSegment>,
+    data_segments: Vec<LinearSegment>,
     parent: String,
 }
 
@@ -544,11 +552,9 @@ struct LinearDevSave {
 pub struct LinearDev {
     id: String,
     meta_dev: Device,
-    meta_start: SectorOffset,
-    meta_length: Sectors,
+    meta_segments: Vec<LinearSegment>,
     data_dev: Device,
-    data_start: SectorOffset,
-    data_length: Sectors,
+    data_segments: Vec<LinearSegment>,
     parent: Rc<RefCell<BlockDev>>,
 }
 
@@ -558,36 +564,44 @@ impl LinearDev {
         name: &str,
         id: &str,
         blockdev: &Rc<RefCell<BlockDev>>,
-        meta_start: SectorOffset,
-        meta_len: Sectors,
-        data_start: SectorOffset,
-        data_len: Sectors)
+        meta_segments: &[LinearSegment],
+        data_segments: &[LinearSegment])
         -> io::Result<LinearDev> {
 
         let dev = blockdev.borrow().dev;
 
         // meta
-        let params = format!("{}:{} {}",
-                             dev.major, dev.minor, *meta_start);
-        let table = (0u64, *meta_len, "linear", params.as_ref());
+        let mut table = Vec::new();
+        let mut offset = SectorOffset(0);
+        for seg in meta_segments {
+            let line = (*offset, *seg.length, "linear",
+                        format!("{}:{} {}", dev.major, dev.minor, *seg.start));
+            table.push(line);
+            offset = offset + SectorOffset(*seg.length);
+        }
 
-        let dm_name = format!("froyo-linear-{}", name);
+        let dm_name = format!("froyo-linear-meta-{}", name);
 
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let meta_di = try!(dm.table_load(&dm_name, &vec![table][..]));
+        let meta_di = try!(dm.table_load(&dm_name, &table));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
         dbgp!("Created {}", dm_name);
 
         // data
-        let params = format!("{}:{} {}",
-                             dev.major, dev.minor, *data_start);
-        let table = (0u64, *data_len, "linear", params.as_ref());
+        let mut table = Vec::new();
+        let mut offset = SectorOffset(0);
+        for seg in data_segments {
+            let line = (*offset, *seg.length, "linear",
+                        format!("{}:{} {}", dev.major, dev.minor, *seg.start));
+            table.push(line);
+            offset = offset + SectorOffset(*seg.length);
+        }
 
-        let dm_name = format!("froyo-linear-{}", name);
+        let dm_name = format!("froyo-linear-data-{}", name);
 
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let data_di = try!(dm.table_load(&dm_name, &vec![table][..]));
+        let data_di = try!(dm.table_load(&dm_name, &table));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
         dbgp!("Created {}", dm_name);
@@ -595,11 +609,9 @@ impl LinearDev {
         Ok(LinearDev{
             id: id.to_owned(),
             meta_dev: meta_di.device(),
-            meta_start: meta_start,
-            meta_length: meta_len,
+            meta_segments: meta_segments.to_vec(),
+            data_segments: data_segments.to_vec(),
             data_dev: data_di.device(),
-            data_start: data_start,
-            data_length: data_len,
             parent: blockdev.clone(),
         })
     }
@@ -607,12 +619,14 @@ impl LinearDev {
     fn to_save(&self) -> LinearDevSave {
         LinearDevSave {
             id: self.id.clone(),
-            meta_start: self.meta_start,
-            meta_length: self.meta_length,
-            data_start: self.data_start,
-            data_length: self.data_length,
+            meta_segments: self.meta_segments.clone(),
+            data_segments: self.data_segments.clone(),
             parent: self.parent.borrow().id.clone(),
         }
+    }
+
+    fn data_length(&self) -> Sectors {
+        self.data_segments.iter().map(|x| x.length).sum()
     }
 }
 
@@ -648,7 +662,7 @@ impl RaidDev {
 
         // skip to account for parity devs
         let target_length = devs.iter().skip(FROYO_REDUNDANCY)
-            .map(|dev| dev.borrow().data_length)
+            .map(|dev| dev.borrow().data_length())
             .sum::<Sectors>();
 
         let params = format!("raid5_ls 3 {} region_size {} {} {}",
@@ -656,12 +670,14 @@ impl RaidDev {
                              *region,
                              raid_texts.len(),
                              raid_texts.join(" "));
-        let raid_table = (0u64, *target_length, "raid", &params[..]);
+        let raid_table = (0u64, *target_length, "raid", params);
 
         let dm_name = format!("froyo-raid5-{}", name);
 
+        println!("blah {:?}", raid_table);
+
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let raid_di = try!(dm.table_load(&dm_name, &vec![raid_table]));
+        let raid_di = try!(dm.table_load(&dm_name, &[raid_table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
         dbgp!("Created {}", dm_name);
@@ -733,12 +749,12 @@ impl RaidLinearDev {
         let dev = parent.borrow().dev;
         let params = format!("{}:{} {}",
                              dev.major, dev.minor, *start);
-        let table = (0u64, *len, "linear", params.as_ref());
+        let table = (0u64, *len, "linear", params);
 
         let dm_name = format!("froyo-raid-linear-{}", name);
 
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let di = try!(dm.table_load(&dm_name, &vec![table][..]));
+        let di = try!(dm.table_load(&dm_name, &[table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
         dbgp!("Created {}", dm_name);
@@ -810,12 +826,12 @@ impl ThinPoolDev {
                              data_raid_dev.dev.major,
                              data_raid_dev.dev.minor,
                              data_block_sectors, low_water_sectors);
-        let table = (0u64, data_sectors, "thin-pool", params.as_ref());
+        let table = (0u64, data_sectors, "thin-pool", params);
 
         let dm_name = format!("froyo-thin-pool-{}", name);
 
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let pool_di = try!(dm.table_load(&dm_name, &vec![table]));
+        let pool_di = try!(dm.table_load(&dm_name, &[table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
         dbgp!("Created {}", dm_name);
@@ -858,12 +874,12 @@ impl ThinDev {
         }
 
         let params = format!("{}:{} {}", pool_dev.dev.major, pool_dev.dev.minor, thin_number);
-        let table = (0u64, thin_vol_sectors, "thin", params.as_ref());
+        let table = (0u64, thin_vol_sectors, "thin", params);
 
         let dm_name = format!("froyo-thin-{}-{}", name, thin_number);
 
         try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let thin_di = try!(dm.table_load(&dm_name, &vec![table]));
+        let thin_di = try!(dm.table_load(&dm_name, &[table]));
         try!(dm.device_suspend(&dm_name, DmFlags::empty()));
 
         dbgp!("Created {}", dm_name);
@@ -1010,9 +1026,8 @@ impl Froyo {
                 match froyo.block_devs.get(&sld.parent) {
                     Some(bd) => {
                         let ld = Rc::new(RefCell::new(try!(LinearDev::create(
-                            &dm, &format!("{}-meta-{}", froyo.name, num),
-                            &sld.id, bd, sld.meta_start, sld.meta_length,
-                            sld.data_start, sld.data_length))));
+                            &dm, &format!("{}-{}", froyo.name, num),
+                            &sld.id, bd, &sld.meta_segments, &sld.data_segments))));
 
                         bd.borrow_mut().linear_devs.push(ld.clone());
                         linear_devs.push(ld);
@@ -1093,13 +1108,17 @@ impl Froyo {
 
             let linear = Rc::new(RefCell::new(try!(LinearDev::create(
                 &dm,
+                &format!("{}-{}-{}", self.name, raid_num, num),
                 &Uuid::new_v4().to_simple_string(),
-                &format!("{}-meta-{}-{}", self.name, raid_num, num),
                 bd,
-                mdata_sector_start,
-                mdata_sectors,
-                data_sector_start,
-                data_sectors))));
+                &vec![LinearSegment {
+                    start: mdata_sector_start,
+                    length: mdata_sectors,
+                }],
+                &vec![LinearSegment {
+                    start: data_sector_start,
+                    length: data_sectors,
+                    }]))));
             bd.borrow_mut().linear_devs.push(linear.clone());
 
             linear_devs.push(linear);
