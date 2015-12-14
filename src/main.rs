@@ -34,6 +34,7 @@ use std::cell::RefCell;
 use std::num::Zero;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::borrow::Borrow;
 
 use devicemapper::{DM, Device, DmFlags};
 use clap::{App, Arg, SubCommand, ArgMatches};
@@ -396,7 +397,7 @@ impl BlockDev {
         used.push((SectorOffset(*self.sectors - *MDA_ZONE_SECTORS), MDA_ZONE_SECTORS));
 
         for dev in &self.linear_devs {
-            let dev = dev.borrow();
+            let dev = RefCell::borrow(dev);
             for seg in &dev.meta_segments {
                 used.push((seg.start, seg.length));
             }
@@ -506,7 +507,7 @@ impl BlockDev {
 
         LittleEndian::write_u64(&mut buf[96..104], self.mdab.last_updated.sec as u64);
         LittleEndian::write_u32(&mut buf[104..108], self.mdab.last_updated.nsec as u32);
-        LittleEndian::write_u32(&mut buf[108..112], self.mdab.length,);
+        LittleEndian::write_u32(&mut buf[108..112], self.mdab.length);
         LittleEndian::write_u32(&mut buf[112..116], self.mdab.crc);
 
         buf[128..160].clone_from_slice(self.froyodev_id.as_bytes());
@@ -558,6 +559,25 @@ pub struct LinearDev {
     parent: Rc<RefCell<BlockDev>>,
 }
 
+fn setup_dm_dev<T1, T2>(dm: &DM, name: &str, targets: &[(u64, u64, T1, T2)])
+                    -> io::Result<Device>
+        where T1: Borrow<str>,
+              T2: Borrow<str>,
+{
+    if let Ok(di) = dm.device_status(name) {
+        dbgp!("Found {}", name);
+        return Ok(di.device())
+    }
+
+    try!(dm.device_create(&name, None, DmFlags::empty()));
+    let di = try!(dm.table_load(&name, &targets));
+    try!(dm.device_suspend(&name, DmFlags::empty()));
+
+    dbgp!("Created {}", name);
+
+    Ok(di.device())
+}
+
 impl LinearDev {
     fn create(
         dm: &DM,
@@ -568,7 +588,7 @@ impl LinearDev {
         data_segments: &[LinearSegment])
         -> io::Result<LinearDev> {
 
-        let dev = blockdev.borrow().dev;
+        let dev = RefCell::borrow(blockdev).dev;
 
         // meta
         let mut table = Vec::new();
@@ -581,12 +601,7 @@ impl LinearDev {
         }
 
         let dm_name = format!("froyo-linear-meta-{}", name);
-
-        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let meta_di = try!(dm.table_load(&dm_name, &table));
-        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-
-        dbgp!("Created {}", dm_name);
+        let meta_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         // data
         let mut table = Vec::new();
@@ -599,19 +614,14 @@ impl LinearDev {
         }
 
         let dm_name = format!("froyo-linear-data-{}", name);
-
-        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let data_di = try!(dm.table_load(&dm_name, &table));
-        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-
-        dbgp!("Created {}", dm_name);
+        let data_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         Ok(LinearDev{
             id: id.to_owned(),
-            meta_dev: meta_di.device(),
+            meta_dev: meta_dev,
             meta_segments: meta_segments.to_vec(),
+            data_dev: data_dev,
             data_segments: data_segments.to_vec(),
-            data_dev: data_di.device(),
             parent: blockdev.clone(),
         })
     }
@@ -621,7 +631,7 @@ impl LinearDev {
             id: self.id.clone(),
             meta_segments: self.meta_segments.clone(),
             data_segments: self.data_segments.clone(),
-            parent: self.parent.borrow().id.clone(),
+            parent: RefCell::borrow(&self.parent).id.clone(),
         }
     }
 
@@ -649,42 +659,39 @@ pub struct RaidDev {
     members: Vec<Rc<RefCell<LinearDev>>>,
 }
 
+fn clear_dev(dev: &Device) -> io::Result<()> {
+    let pathbuf = dev.path().unwrap();
+
+    let mut f = match OpenOptions::new().write(true).open(&pathbuf) {
+        Err(_) => return Err(io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!("Could not open {}", pathbuf.display()))),
+        Ok(x) => x,
+    };
+
+    let len = try!(blkdev_size(&f));
+    let buf = vec![0u8; len as usize];
+    try!(f.write(&buf));
+
+    Ok(())
+}
+
 impl RaidDev {
-
-    fn clear_metadata(devs: &[Rc<RefCell<LinearDev>>]) -> io::Result<()> {
-        for linear_dev in devs {
-
-            let pathbuf = linear_dev.borrow().meta_dev.path().unwrap();
-
-            let mut f = match OpenOptions::new().read(true).write(true).open(&pathbuf) {
-                Err(_) => return Err(io::Error::new(
-                    ErrorKind::PermissionDenied,
-                    format!("Could not open {}", pathbuf.display()))),
-                Ok(x) => x,
-            };
-
-            let len = linear_dev.borrow().meta_segments.iter().map(|x| *x.length as usize).sum();
-            let buf = vec![0u8; len];
-
-            try!(f.write(&buf));
-        }
-
-        Ok(())
-    }
-
     fn create(dm: &DM, name: &str, devs: &[Rc<RefCell<LinearDev>>],
               stripe: Sectors, region: Sectors)
               -> io::Result<RaidDev> {
 
         let raid_texts: Vec<_> = devs.iter()
             .map(|dev| format!("{}:{} {}:{}",
-                               dev.borrow().meta_dev.major, dev.borrow().meta_dev.minor,
-                               dev.borrow().data_dev.major, dev.borrow().data_dev.minor))
+                               RefCell::borrow(dev).meta_dev.major,
+                               RefCell::borrow(dev).meta_dev.minor,
+                               RefCell::borrow(dev).data_dev.major,
+                               RefCell::borrow(dev).data_dev.minor))
             .collect();
 
         // skip to account for parity devs
         let target_length = devs.iter().skip(FROYO_REDUNDANCY)
-            .map(|dev| dev.borrow().data_length())
+            .map(|dev| RefCell::borrow(dev).data_length())
             .sum::<Sectors>();
 
         let params = format!("raid5_ls 3 {} region_size {} {} {}",
@@ -692,19 +699,13 @@ impl RaidDev {
                              *region,
                              raid_texts.len(),
                              raid_texts.join(" "));
-        let raid_table = (0u64, *target_length, "raid", params);
-
+        let raid_table = [(0u64, *target_length, "raid", params)];
         let dm_name = format!("froyo-raid5-{}", name);
-
-        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let raid_di = try!(dm.table_load(&dm_name, &[raid_table]));
-        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-
-        dbgp!("Created {}", dm_name);
+        let raid_dev = try!(setup_dm_dev(dm, &dm_name, &raid_table));
 
         Ok(RaidDev {
             id: Uuid::new_v4().to_simple_string(),
-            dev: raid_di.device(),
+            dev: raid_dev,
             stripe_sectors: stripe,
             region_sectors: region,
             length: target_length,
@@ -719,7 +720,7 @@ impl RaidDev {
             region_sectors: self.region_sectors,
             length: self.length,
             members: self.members.iter()
-                .map(|dev| dev.borrow().to_save())
+                .map(|dev| RefCell::borrow(dev).to_save())
                 .collect(),
         }
     }
@@ -744,7 +745,7 @@ impl RaidSegment {
         RaidSegmentSave {
             start: self.start,
             length: self.length,
-            parent: self.parent.borrow().id.clone(),
+            parent: RefCell::borrow(&self.parent).id.clone(),
         }
     }
 }
@@ -766,18 +767,13 @@ impl RaidLinearDev {
     fn create(dm: &DM, name: &str, parent: &Rc<RefCell<RaidDev>>, start: SectorOffset, len: Sectors)
               -> io::Result<RaidLinearDev> {
 
-        let dev = parent.borrow().dev;
+        let dev = RefCell::borrow(parent).dev;
         let params = format!("{}:{} {}",
                              dev.major, dev.minor, *start);
-        let table = (0u64, *len, "linear", params);
+        let table = [(0u64, *len, "linear", params)];
 
         let dm_name = format!("froyo-raid-linear-{}", name);
-
-        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let di = try!(dm.table_load(&dm_name, &[table]));
-        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-
-        dbgp!("Created {}", dm_name);
+        let rl_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         let segment = RaidSegment {
             start: start,
@@ -787,7 +783,7 @@ impl RaidLinearDev {
 
         Ok(RaidLinearDev{
             id: Uuid::new_v4().to_simple_string(),
-            dev: di.device(),
+            dev: rl_dev,
             segments: vec![segment],
         })
     }
@@ -846,19 +842,14 @@ impl ThinPoolDev {
                              data_raid_dev.dev.major,
                              data_raid_dev.dev.minor,
                              data_block_sectors, low_water_sectors);
-        let table = (0u64, data_sectors, "thin-pool", params);
+        let table = [(0u64, data_sectors, "thin-pool", params)];
 
         let dm_name = format!("froyo-thin-pool-{}", name);
-
-        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let pool_di = try!(dm.table_load(&dm_name, &[table]));
-        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-
-        dbgp!("Created {}", dm_name);
+        let pool_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         Ok(ThinPoolDev {
             dm_name: dm_name,
-            dev: pool_di.device(),
+            dev: pool_dev,
             meta_dev: meta_raid_dev,
             data_dev: data_raid_dev,
         })
@@ -897,18 +888,13 @@ impl ThinDev {
         }
 
         let params = format!("{}:{} {}", pool_dev.dev.major, pool_dev.dev.minor, thin_number);
-        let table = (0u64, thin_vol_sectors, "thin", params);
+        let table = [(0u64, thin_vol_sectors, "thin", params)];
 
         let dm_name = format!("froyo-thin-{}-{}", name, thin_number);
-
-        try!(dm.device_create(&dm_name, None, DmFlags::empty()));
-        let thin_di = try!(dm.table_load(&dm_name, &[table]));
-        try!(dm.device_suspend(&dm_name, DmFlags::empty()));
-
-        dbgp!("Created {}", dm_name);
+        let thin_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         Ok(ThinDev {
-            dev: thin_di.device(),
+            dev: thin_dev,
             thin_number: thin_number,
             size: Sectors(thin_vol_sectors),
         })
@@ -960,10 +946,10 @@ impl Froyo {
             name: self.name.to_owned(),
             id: self.id.to_owned(),
             block_devs: self.block_devs.iter()
-                .map(|(id, bd)| (id.clone(), bd.borrow().to_save()))
+                .map(|(id, bd)| (id.clone(), RefCell::borrow(bd).to_save()))
                 .collect(),
             raid_devs: self.raid_devs.iter()
-                .map(|x| x.borrow().to_save())
+                .map(|x| RefCell::borrow(x).to_save())
                 .collect(),
             thin_pool_dev: self.thin_pool_dev.as_ref().map(|x| x.to_save()),
             thin_devs: self.thin_devs.iter()
@@ -1008,7 +994,8 @@ impl Froyo {
         Ok(froyos)
     }
 
-    fn from_save(froyo_save: &FroyoSave, froyo_id: &str, blockdevs: &[BlockDev]) -> io::Result<Froyo> {
+    fn from_save(froyo_save: &FroyoSave, froyo_id: &str, blockdevs: &[BlockDev])
+                 -> io::Result<Froyo> {
         let mut froyo = Froyo::new(&froyo_save.name, froyo_id);
 
         let mut bd_map: BTreeMap<&String, &BlockDev> = blockdevs.iter()
@@ -1086,7 +1073,7 @@ impl Froyo {
         // get common data area size, allowing for Froyo data at start and end
         let mut bd_areas: Vec<_> = self.block_devs.iter_mut()
             .filter_map(|(_, bd)| {
-                match bd.borrow().largest_free_area() {
+                match RefCell::borrow(bd).largest_free_area() {
                     Some(x) => Some((bd.clone(), x)),
                     None => None,
                 }
@@ -1145,13 +1132,13 @@ impl Froyo {
                     start: data_sector_start,
                     length: data_sectors,
                     }]))));
+
+            if force {
+                try!(clear_dev(&RefCell::borrow(&linear).meta_dev));
+            }
+
             bd.borrow_mut().linear_devs.push(linear.clone());
-
             linear_devs.push(linear);
-        }
-
-        if force {
-            try!(RaidDev::clear_metadata(&linear_devs));
         }
 
         let raid = try!(RaidDev::create(
