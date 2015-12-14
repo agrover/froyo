@@ -650,6 +650,28 @@ pub struct RaidDev {
 }
 
 impl RaidDev {
+
+    fn clear_metadata(devs: &[Rc<RefCell<LinearDev>>]) -> io::Result<()> {
+        for linear_dev in devs {
+
+            let pathbuf = linear_dev.borrow().meta_dev.path().unwrap();
+
+            let mut f = match OpenOptions::new().read(true).write(true).open(&pathbuf) {
+                Err(_) => return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    format!("Could not open {}", pathbuf.display()))),
+                Ok(x) => x,
+            };
+
+            let len = linear_dev.borrow().meta_segments.iter().map(|x| *x.length as usize).sum();
+            let buf = vec![0u8; len];
+
+            try!(f.write(&buf));
+        }
+
+        Ok(())
+    }
+
     fn create(dm: &DM, name: &str, devs: &[Rc<RefCell<LinearDev>>],
               stripe: Sectors, region: Sectors)
               -> io::Result<RaidDev> {
@@ -1052,7 +1074,7 @@ impl Froyo {
 
     // Try to make an as-large-as-possible redundant device from the
     // given block devices.
-    fn create_redundant_zone(&mut self) -> Result<Option<RaidDev>, FroyoError> {
+    fn create_redundant_zone(&mut self, force: bool) -> Result<Option<RaidDev>, FroyoError> {
         let dm = try!(DM::new());
 
         // TODO: Make sure name has only chars we can use in a DM name
@@ -1124,6 +1146,10 @@ impl Froyo {
             linear_devs.push(linear);
         }
 
+        if force {
+            try!(RaidDev::clear_metadata(&linear_devs));
+        }
+
         let raid = try!(RaidDev::create(
             &dm,
             &format!("{}-{}", self.name, raid_num),
@@ -1134,9 +1160,9 @@ impl Froyo {
         Ok(Some(raid))
     }
 
-    pub fn create_redundant_zones(&mut self) -> Result<(), FroyoError> {
+    pub fn create_redundant_zones(&mut self, force: bool) -> Result<(), FroyoError> {
         loop {
-            if let Some(rd) = try!(self.create_redundant_zone()) {
+            if let Some(rd) = try!(self.create_redundant_zone(force)) {
                 self.raid_devs.push(Rc::new(RefCell::new(rd)));
             } else {
                 break
@@ -1203,6 +1229,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
                 PathBuf::from(dev)
             }})
         .collect();
+    let force = args.is_present("force");
 
     if dev_paths.len() < 2 {
         return Err(FroyoError::Io(io::Error::new(
@@ -1218,11 +1245,11 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
     let mut froyo = Froyo::new(name, &Uuid::new_v4().to_simple_string());
 
     for pathbuf in dev_paths {
-        let bd = try!(BlockDev::initialize(&froyo.id, &pathbuf, args.is_present("force")));
+        let bd = try!(BlockDev::initialize(&froyo.id, &pathbuf, force));
         try!(froyo.add_blockdev(bd));
     }
 
-    try!(froyo.create_redundant_zones());
+    try!(froyo.create_redundant_zones(force));
 
     let dm = try!(DM::new());
 
