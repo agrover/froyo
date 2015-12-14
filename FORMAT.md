@@ -77,50 +77,174 @@ Froyo is implemented using layers of devicemapper devices:
 |3      | two linear targets for thin-meta and thin-data, and the thin-pool that uses them (actually two layers)
 |4      | Thin volumes allocated out of the thin pool
 
-Additional target layers may be used, but info on these layers is sufficient to configure the Froyodev for use.
+Plus additional temporary devices as needed
 
-##### example json
+##### Example JSON
 
 ```json
 {
-"name": "foo",
-"l0_devs" : [
-  {"id":"asdasd",
-	    "major":322,
-	    "minor":12},
-	{"id":"3de56",
-	    "major":322,
-	    "minor":45},
-	{"id":"f00f1234",
-	    "major":4,
-	    "minor":22}],
-"l1_devs" : [
-  {"name": "qweqwe",
-   "from": "asdasd",
-	 "raid_meta":[{"offset":213,
-	 "length":16}],
-	 "raid_data":[{"offset":400,
-	 "length":9000}]}],
-"l2_devs": [{"name":"ertert",
-	"region_size": 8192,
-	"stripe_size": 2048,
-	"type": "raid5_ls",
-	"from":["qweqwe", "2nd disk", "etc"]}],
-"l3_dev": {
-  "meta":[
-     {"from":"ertert",
-	    "offset":0,
-	    "len":200}],
-	"data":[
-	   {"from":"ertert",
-	    "offset":200,
-	    "len":1000}],
-	 "block_size":8192},
-"l4_devs": [
-    {"name":"5d3e2",
-	  "thin_id":0,
-	  "fs":"xfs",
-	  "size":123123141241241}]
+  "name": "froyodev-1",
+  "id": "3e0e1e09061e4cae8248c24576e4d931",
+  "block_devs": {
+    "3f85352dea0346fbb2ea846abba66f0f": {
+      "path": "/dev/vdb",
+      "sectors": 16777216
+    },
+    "968287b70dca479682b63c4dfe5a5948": {
+      "path": "/dev/vdc",
+      "sectors": 16777216
+    },
+    "c667fab02599442e9a0de7bc0309530b": {
+      "path": "/dev/vde",
+      "sectors": 25165824
+    },
+    "e07d78df365c4590bb5c790c487a24a1": {
+      "path": "/dev/vdd",
+      "sectors": 23068672
+    }
+  },
+  "raid_devs": [
+    {
+      "id": "1400b1e499e64e3fac1206dbb45fc76b",
+      "stripe_sectors": 2048,
+      "region_sectors": 8192,
+      "length": 50313216,
+      "members": [
+        {
+          "id": "bc00f415fc3d483090c6c4e75ff8aa5f",
+          "meta_segments": [
+            {
+              "start": 2048,
+              "length": 32
+            }
+          ],
+          "data_segments": [
+            {
+              "start": 2080,
+              "length": 16771072
+            }
+          ],
+          "parent": "3f85352dea0346fbb2ea846abba66f0f"
+        },
+        {
+          "id": "4f811dc3bb3b4755b0c54514ecbff790",
+          "meta_segments": [
+            {
+              "start": 2048,
+              "length": 32
+            }
+          ],
+          "data_segments": [
+            {
+              "start": 2080,
+              "length": 16771072
+            }
+          ],
+          "parent": "968287b70dca479682b63c4dfe5a5948"
+        },
+        {
+          "id": "505c1d7af6434f968ec5a6881c48a252",
+          "meta_segments": [
+            {
+              "start": 2048,
+              "length": 32
+            }
+          ],
+          "data_segments": [
+            {
+              "start": 2080,
+              "length": 16771072
+            }
+          ],
+          "parent": "c667fab02599442e9a0de7bc0309530b"
+        },
+        {
+          "id": "bb8db73b7f044e7ab54dfe1fc6dc6642",
+          "meta_segments": [
+            {
+              "start": 2048,
+              "length": 32
+            }
+          ],
+          "data_segments": [
+            {
+              "start": 2080,
+              "length": 16771072
+            }
+          ],
+          "parent": "e07d78df365c4590bb5c790c487a24a1"
+        }
+      ]
+    },
+    {
+      "id": "980e1a685e744a73b36ece9a7f5f6f32",
+      "stripe_sectors": 2048,
+      "region_sectors": 8192,
+      "length": 6291456,
+      "members": [
+        {
+          "id": "728d7c81c8a948fdb36ddbb7910af7f0",
+          "meta_segments": [
+            {
+              "start": 16773152,
+              "length": 32
+            }
+          ],
+          "data_segments": [
+            {
+              "start": 16773184,
+              "length": 6291456
+            }
+          ],
+          "parent": "c667fab02599442e9a0de7bc0309530b"
+        },
+        {
+          "id": "4d12c3dc27fa4a7b99a49b8e5f037404",
+          "meta_segments": [
+            {
+              "start": 16773152,
+              "length": 32
+            }
+          ],
+          "data_segments": [
+            {
+              "start": 16773184,
+              "length": 6291456
+            }
+          ],
+          "parent": "e07d78df365c4590bb5c790c487a24a1"
+        }
+      ]
+    }
+  ],
+  "thin_pool_dev": {
+    "meta_dev": {
+      "id": "05ec2e691bc0482e9f76be36c0d8acf5",
+      "segments": [
+        {
+          "start": 0,
+          "length": 8192,
+          "parent": "1400b1e499e64e3fac1206dbb45fc76b"
+        }
+      ]
+    },
+    "data_dev": {
+      "id": "2d27514c21f843f3a24635de771bec36",
+      "segments": [
+        {
+          "start": 0,
+          "length": 1048576,
+          "parent": "980e1a685e744a73b36ece9a7f5f6f32"
+        }
+      ]
+    }
+  },
+  "thin_devs": [
+    {
+     "thin_number": 0,
+      "fs": "xfs",
+      "size": 2147483648
+    }
+  ]
 }
-
 ```
