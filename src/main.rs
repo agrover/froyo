@@ -194,7 +194,6 @@ impl From<serde_json::error::Error> for FroyoError {
     }
 }
 
-
 fn blkdev_size(file: &File) -> io::Result<u64> {
     // BLKGETSIZE64
     let op = ioctl::op_read(0x12, 114, 8);
@@ -781,10 +780,50 @@ impl RaidLinearDev {
             parent: parent.clone(),
         };
 
-        Ok(RaidLinearDev{
+        Ok(RaidLinearDev {
             id: Uuid::new_v4().to_simple_string(),
             dev: rl_dev,
             segments: vec![segment],
+        })
+    }
+
+    fn from_save(
+        dm: &DM,
+        name: &str,
+        raid_linear_dev: &RaidLinearDevSave,
+        raid_devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
+        -> io::Result<RaidLinearDev> {
+
+        let mut segments = Vec::new();
+        for segment in &raid_linear_dev.segments {
+            let parent = try!(raid_devs.get(&segment.parent).ok_or(
+                io::Error::new(io::ErrorKind::InvalidInput,
+                               "Could not find parent")));
+
+            segments.push(RaidSegment {
+                start: segment.start,
+                length: segment.length,
+                parent: parent.clone(),
+            });
+        }
+
+        let mut table = Vec::new();
+        let mut offset = SectorOffset(0);
+        for seg in &segments {
+            let line = (*offset, *seg.length, "linear",
+                        format!("{}:{} {}", RefCell::borrow(&seg.parent).dev.major,
+                                RefCell::borrow(&seg.parent).dev.minor, *seg.start));
+            table.push(line);
+            offset = offset + SectorOffset(*seg.length);
+        }
+
+        let dm_name = format!("froyo-raid-linear-{}", name);
+        let linear_dev = try!(setup_dm_dev(dm, &dm_name, &table));
+
+        Ok(RaidLinearDev {
+            id: raid_linear_dev.id.to_owned(),
+            dev: linear_dev,
+            segments: segments,
         })
     }
 
@@ -796,10 +835,16 @@ impl RaidLinearDev {
                 .collect()
         }
     }
+
+    fn length(&self) -> Sectors {
+        self.segments.iter().map(|x| x.length).sum()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ThinPoolDevSave {
+    data_block_size: Sectors,
+    low_water_blocks: u64,
     meta_dev: RaidLinearDevSave,
     data_dev: RaidLinearDevSave,
 }
@@ -808,20 +853,26 @@ struct ThinPoolDevSave {
 struct ThinPoolDev {
     dm_name: String,
     dev: Device,
+    data_block_size: Sectors,
+    low_water_blocks: u64, // in # of blocks
     meta_dev: RaidLinearDev,
     data_dev: RaidLinearDev,
 }
 
 impl ThinPoolDev {
-    fn create(dm: &DM, name: &str, devs: &[Rc<RefCell<RaidDev>>])
+    fn create(dm: &DM, name: &str, devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
               -> io::Result<ThinPoolDev> {
-        // FIXME: Creating metadata on 0th raid, data on 1st raid
+
+        let (_, rd) = devs.iter().next().unwrap();
+
+        // Put both on the 0th raid.
+        // TODO: Improve this, spread across multiple, split, etc.
 
         let meta_name = format!("thin-meta-{}", name);
         let meta_raid_dev = try!(RaidLinearDev::create(
             dm,
             &meta_name,
-            &devs[0],
+            &rd,
             SectorOffset(0),
             Sectors(8192)));
 
@@ -830,18 +881,18 @@ impl ThinPoolDev {
         let data_raid_dev = try!(RaidLinearDev::create(
             dm,
             &meta_name,
-            &devs[1],
-            SectorOffset(0),
+            &rd,
+            SectorOffset(8192),
             Sectors(data_sectors)));
 
         let data_block_sectors = 2048; // 1MiB
-        let low_water_sectors = 2048 * 512; // 512MiB
+        let low_water_blocks = 512; // 512MiB
         let params = format!("{}:{} {}:{} {} {}",
                              meta_raid_dev.dev.major,
                              meta_raid_dev.dev.minor,
                              data_raid_dev.dev.major,
                              data_raid_dev.dev.minor,
-                             data_block_sectors, low_water_sectors);
+                             data_block_sectors, low_water_blocks);
         let table = [(0u64, data_sectors, "thin-pool", params)];
 
         let dm_name = format!("froyo-thin-pool-{}", name);
@@ -850,13 +901,50 @@ impl ThinPoolDev {
         Ok(ThinPoolDev {
             dm_name: dm_name,
             dev: pool_dev,
+            data_block_size: Sectors(data_block_sectors),
+            low_water_blocks: low_water_blocks,
             meta_dev: meta_raid_dev,
             data_dev: data_raid_dev,
         })
     }
 
+    fn from_save(
+        dm: &DM,
+        name: &str,
+        thin_pool_save: &ThinPoolDevSave,
+        raid_devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
+        -> Result<ThinPoolDev, FroyoError> {
+        let meta_dev = try!(RaidLinearDev::from_save(
+            dm, name, &thin_pool_save.meta_dev, raid_devs));
+        let data_dev = try!(RaidLinearDev::from_save(
+            dm, name, &thin_pool_save.data_dev, raid_devs));
+
+        let params = format!("{}:{} {}:{} {} {}",
+                             meta_dev.dev.major,
+                             meta_dev.dev.minor,
+                             data_dev.dev.major,
+                             data_dev.dev.minor,
+                             *thin_pool_save.data_block_size,
+                             thin_pool_save.low_water_blocks);
+        let table = [(0u64, *data_dev.length(), "thin-pool", params)];
+
+        let dm_name = format!("froyo-thin-pool-{}", name);
+        let pool_dev = try!(setup_dm_dev(dm, &dm_name, &table));
+
+        Ok(ThinPoolDev {
+            dm_name: dm_name,
+            dev: pool_dev,
+            data_block_size: thin_pool_save.data_block_size,
+            low_water_blocks: thin_pool_save.low_water_blocks,
+            meta_dev: meta_dev,
+            data_dev: data_dev,
+        })
+    }
+
     fn to_save(&self) -> ThinPoolDevSave {
         ThinPoolDevSave {
+            data_block_size: self.data_block_size,
+            low_water_blocks: self.low_water_blocks,
             meta_dev: self.meta_dev.to_save(),
             data_dev: self.data_dev.to_save(),
         }
@@ -874,21 +962,26 @@ struct ThinDevSave {
 struct ThinDev {
     dev: Device,
     thin_number: u32,
+    fs: String,
     size: Sectors,
 }
 
 impl ThinDev {
-    fn create(dm: &DM, name: &str, pool_dev: &ThinPoolDev) -> io::Result<ThinDev> {
-        let thin_number = 0;
-        let thin_vol_sectors = 1024 * 1024 * 1024 * 1024 / SECTOR_SIZE;
-
+    fn create(
+        dm: &DM,
+        name: &str,
+        thin_number: u32,
+        fs: &str,
+        size: Sectors,
+        pool_dev: &ThinPoolDev)
+        -> io::Result<ThinDev> {
         match dm.target_msg(&pool_dev.dm_name, 0, &format!("create_thin {}", thin_number)) {
             Err(x) => dbgp!("create_thin message failed: {}", x.description()),
             Ok(_) => {},
         }
 
         let params = format!("{}:{} {}", pool_dev.dev.major, pool_dev.dev.minor, thin_number);
-        let table = [(0u64, thin_vol_sectors, "thin", params)];
+        let table = [(0u64, *size, "thin", params)];
 
         let dm_name = format!("froyo-thin-{}-{}", name, thin_number);
         let thin_dev = try!(setup_dm_dev(dm, &dm_name, &table));
@@ -896,14 +989,15 @@ impl ThinDev {
         Ok(ThinDev {
             dev: thin_dev,
             thin_number: thin_number,
-            size: Sectors(thin_vol_sectors),
+            fs: fs.to_owned(),
+            size: size,
         })
     }
 
     fn to_save(&self) -> ThinDevSave {
         ThinDevSave {
             thin_number: self.thin_number,
-            fs: "xfs".to_string(),
+            fs: self.fs.clone(),
             size: self.size,
         }
     }
@@ -915,7 +1009,7 @@ struct FroyoSave {
     id: String,
     block_devs: BTreeMap<String, BlockDevSave>,
     raid_devs: Vec<RaidDevSave>,
-    thin_pool_dev: Option<ThinPoolDevSave>,
+    thin_pool_dev: ThinPoolDevSave,
     thin_devs: Vec<ThinDevSave>,
 }
 
@@ -924,21 +1018,54 @@ pub struct Froyo {
     id: String,
     name: String,
     block_devs: BTreeMap<String, Rc<RefCell<BlockDev>>>,
-    raid_devs: Vec<Rc<RefCell<RaidDev>>>,
-    thin_pool_dev: Option<ThinPoolDev>,
+    raid_devs: BTreeMap<String, Rc<RefCell<RaidDev>>>,
+    thin_pool_dev: ThinPoolDev,
     thin_devs: Vec<ThinDev>,
 }
 
 impl Froyo {
-    fn new(name: &str, id: &str) -> Froyo {
-        Froyo {
-            id: id.to_owned(),
-            name: name.to_owned(),
-            block_devs: BTreeMap::new(),
-            raid_devs: Vec::new(),
-            thin_pool_dev: None,
-            thin_devs: Vec::new(),
+    fn create<T>(name: &str, id: &str, paths: &[T], force: bool) -> Result<Froyo, FroyoError>
+        where T: Borrow<Path>
+    {
+        let mut block_devs = BTreeMap::new();
+        for path in paths {
+            let bd = Rc::new(RefCell::new(
+                try!(BlockDev::initialize(&id, path.borrow(), force))));
+            block_devs.insert(RefCell::borrow(&bd).id.clone(), bd.clone());
         }
+
+        let dm = try!(DM::new());
+
+        let mut raid_devs = BTreeMap::new();
+        loop {
+            if let Some(rd) = try!(
+                Froyo::create_redundant_zone(&dm, name, &block_devs, raid_devs.len(), force)) {
+                raid_devs.insert(rd.id.clone(), Rc::new(RefCell::new(rd)));
+            } else {
+                break
+            }
+        }
+
+        let thin_pool_dev = try!(ThinPoolDev::create(&dm, name, &raid_devs));
+        let mut thin_devs = Vec::new();
+
+        // Create an initial 1TB thin dev
+        thin_devs.push(try!(ThinDev::create(
+            &dm,
+            name,
+            0,
+            "xfs",
+            Sectors(1024 * 1024 * 1024 * 1024 / SECTOR_SIZE),
+            &thin_pool_dev)));
+
+        Ok(Froyo {
+            name: name.to_owned(),
+            id: id.to_owned(),
+            block_devs: block_devs,
+            raid_devs: raid_devs,
+            thin_pool_dev: thin_pool_dev,
+            thin_devs: thin_devs,
+        })
     }
 
     fn to_save(&self) -> FroyoSave {
@@ -949,9 +1076,9 @@ impl Froyo {
                 .map(|(id, bd)| (id.clone(), RefCell::borrow(bd).to_save()))
                 .collect(),
             raid_devs: self.raid_devs.iter()
-                .map(|x| RefCell::borrow(x).to_save())
+                .map(|(_, x)| RefCell::borrow(x).to_save())
                 .collect(),
-            thin_pool_dev: self.thin_pool_dev.as_ref().map(|x| x.to_save()),
+            thin_pool_dev: self.thin_pool_dev.to_save(),
             thin_devs: self.thin_devs.iter()
                 .map(|x| x.to_save())
                 .collect(),
@@ -995,17 +1122,16 @@ impl Froyo {
     }
 
     fn from_save(froyo_save: &FroyoSave, froyo_id: &str, blockdevs: &[BlockDev])
-                 -> io::Result<Froyo> {
-        let mut froyo = Froyo::new(&froyo_save.name, froyo_id);
-
+                 -> Result<Froyo, FroyoError> {
         let mut bd_map: BTreeMap<&String, &BlockDev> = blockdevs.iter()
             .map(|x| (&x.id, x))
             .collect();
 
+        let mut block_devs = BTreeMap::new();
         for (id, sbd) in &froyo_save.block_devs {
             match bd_map.remove(id) {
                 Some(x) => {
-                    if froyo.block_devs.insert(
+                    if block_devs.insert(
                         id.clone(), Rc::new(RefCell::new(x.clone()))).is_some() {
                         panic!("should never happen")
                     }
@@ -1017,29 +1143,30 @@ impl Froyo {
 
         for (_, bd) in bd_map {
             dbgp!("{} header indicates it's part of {} but not found in metadata",
-                  bd.path.display(), froyo.name);
+                  bd.path.display(), froyo_save.name);
         }
 
-        match froyo_save.block_devs.len() - froyo.block_devs.len() {
+        match froyo_save.block_devs.len() - block_devs.len() {
             0 => dbgp!("All {} block devices found for {}",
-                       froyo.block_devs.len(), froyo.name),
+                       block_devs.len(), froyo_save.name),
             num @ 1...FROYO_REDUNDANCY => dbgp!("Missing {} of {} drives from {}, can continue",
-                                                num, froyo_save.block_devs.len(), froyo.name),
-            num @ _ => return Err(io::Error::new(
+                                                num, froyo_save.block_devs.len(), froyo_save.name),
+            num @ _ => return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("{} of {} devices missing from {}",
-                        num, froyo_save.block_devs.len(), froyo.name))),
+                        num, froyo_save.block_devs.len(), froyo_save.name)))),
         }
 
         let dm = try!(DM::new());
 
+        let mut raid_devs = BTreeMap::new();
         for (num, srd) in froyo_save.raid_devs.iter().enumerate() {
             let mut linear_devs = Vec::new();
             for (num, sld) in srd.members.iter().enumerate() {
-                match froyo.block_devs.get(&sld.parent) {
+                match block_devs.get(&sld.parent) {
                     Some(bd) => {
                         let ld = Rc::new(RefCell::new(try!(LinearDev::create(
-                            &dm, &format!("{}-{}", froyo.name, num),
+                            &dm, &format!("{}-{}", froyo_save.name, num),
                             &sld.id, bd, &sld.meta_segments, &sld.data_segments))));
 
                         bd.borrow_mut().linear_devs.push(ld.clone());
@@ -1052,26 +1179,54 @@ impl Froyo {
             // TODO: handle when devs is less than what's in srd
             let rd = Rc::new(RefCell::new(try!(RaidDev::create(
                 &dm,
-                &format!("{}-{}", froyo.name, num),
+                &format!("{}-{}", froyo_save.name, num),
                 &linear_devs[..],
                 srd.stripe_sectors,
                 srd.region_sectors))));
 
-            froyo.raid_devs.push(rd);
+            let id = RefCell::borrow(&rd).id.clone();
+            raid_devs.insert(id, rd);
         }
 
-        Ok(froyo)
+        // TODO use froyo_save values
+        let thin_pool_dev = try!(ThinPoolDev::from_save(
+            &dm, &froyo_save.name, &froyo_save.thin_pool_dev, &raid_devs));
+
+        let mut thin_devs = Vec::new();
+        for std in &froyo_save.thin_devs {
+            thin_devs.push(try!(ThinDev::create(
+                &dm,
+                &froyo_save.name,
+                std.thin_number,
+                &std.fs,
+                std.size,
+                &thin_pool_dev)));
+        }
+
+        Ok(Froyo {
+            name: froyo_save.name.to_owned(),
+            id: froyo_id.to_owned(),
+            block_devs: block_devs,
+            raid_devs: raid_devs,
+            thin_pool_dev: thin_pool_dev,
+            thin_devs: thin_devs,
+        })
     }
 
     // Try to make an as-large-as-possible redundant device from the
     // given block devices.
-    fn create_redundant_zone(&mut self, force: bool) -> Result<Option<RaidDev>, FroyoError> {
-        let dm = try!(DM::new());
+    fn create_redundant_zone(
+        dm: &DM,
+        name: &str,
+        block_devs: &BTreeMap<String, Rc<RefCell<BlockDev>>>,
+        existing_raids: usize,
+        force: bool)
+        -> Result<Option<RaidDev>, FroyoError> {
 
         // TODO: Make sure name has only chars we can use in a DM name
 
         // get common data area size, allowing for Froyo data at start and end
-        let mut bd_areas: Vec<_> = self.block_devs.iter_mut()
+        let mut bd_areas: Vec<_> = block_devs.iter()
             .filter_map(|(_, bd)| {
                 match RefCell::borrow(bd).largest_free_area() {
                     Some(x) => Some((bd.clone(), x)),
@@ -1112,8 +1267,6 @@ impl Froyo {
         // data size must be multiple of stripe size
         let data_sectors = (common_free_sectors - mdata_sectors) & Sectors(!(*STRIPE_SECTORS-1));
 
-        let raid_num = self.raid_devs.len();
-
         let mut linear_devs = Vec::new();
         for (num, &mut(ref mut bd, (sector_start, _))) in bd_areas.iter_mut().enumerate() {
             let mdata_sector_start = sector_start;
@@ -1121,7 +1274,7 @@ impl Froyo {
 
             let linear = Rc::new(RefCell::new(try!(LinearDev::create(
                 &dm,
-                &format!("{}-{}-{}", self.name, raid_num, num),
+                &format!("{}-{}-{}", name, existing_raids, num),
                 &Uuid::new_v4().to_simple_string(),
                 bd,
                 &vec![LinearSegment {
@@ -1143,30 +1296,12 @@ impl Froyo {
 
         let raid = try!(RaidDev::create(
             &dm,
-            &format!("{}-{}", self.name, raid_num),
+            &format!("{}-{}", name, existing_raids),
             &linear_devs[..],
             STRIPE_SECTORS,
             region_sectors));
 
         Ok(Some(raid))
-    }
-
-    pub fn create_redundant_zones(&mut self, force: bool) -> Result<(), FroyoError> {
-        loop {
-            if let Some(rd) = try!(self.create_redundant_zone(force)) {
-                self.raid_devs.push(Rc::new(RefCell::new(rd)));
-            } else {
-                break
-            }
-        }
-
-        Ok(())
-    }
-
-    fn add_blockdev(&mut self, bdev: BlockDev) -> Result<(), FroyoError> {
-        self.block_devs.insert(bdev.id.clone(), Rc::new(RefCell::new(bdev)));
-
-        Ok(())
     }
 
     pub fn reshape(&mut self) -> io::Result<()> {
@@ -1233,20 +1368,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
             format!("Max supported devices is 8, {} given", dev_paths.len()))))
     }
 
-    let mut froyo = Froyo::new(name, &Uuid::new_v4().to_simple_string());
-
-    for pathbuf in dev_paths {
-        let bd = try!(BlockDev::initialize(&froyo.id, &pathbuf, force));
-        try!(froyo.add_blockdev(bd));
-    }
-
-    try!(froyo.create_redundant_zones(force));
-
-    let dm = try!(DM::new());
-
-    froyo.thin_pool_dev = Some(try!(ThinPoolDev::create(&dm, name, &froyo.raid_devs)));
-    froyo.thin_devs.push(try!(ThinDev::create(
-        &dm, name, froyo.thin_pool_dev.as_ref().unwrap())));
+    let froyo = try!(Froyo::create(name, &Uuid::new_v4().to_simple_string(), &dev_paths, force));
 
     try!(froyo.save_state());
 
