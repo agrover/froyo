@@ -542,7 +542,6 @@ struct LinearSegment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LinearDevSave {
-    id: String,
     meta_segments: Vec<LinearSegment>,
     data_segments: Vec<LinearSegment>,
     parent: String,
@@ -550,7 +549,6 @@ struct LinearDevSave {
 
 #[derive(Debug, Clone)]
 pub struct LinearDev {
-    id: String,
     meta_dev: Device,
     meta_segments: Vec<LinearSegment>,
     data_dev: Device,
@@ -581,7 +579,6 @@ impl LinearDev {
     fn create(
         dm: &DM,
         name: &str,
-        id: &str,
         blockdev: &Rc<RefCell<BlockDev>>,
         meta_segments: &[LinearSegment],
         data_segments: &[LinearSegment])
@@ -616,7 +613,6 @@ impl LinearDev {
         let data_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         Ok(LinearDev{
-            id: id.to_owned(),
             meta_dev: meta_dev,
             meta_segments: meta_segments.to_vec(),
             data_dev: data_dev,
@@ -627,7 +623,6 @@ impl LinearDev {
 
     fn to_save(&self) -> LinearDevSave {
         LinearDevSave {
-            id: self.id.clone(),
             meta_segments: self.meta_segments.clone(),
             data_segments: self.data_segments.clone(),
             parent: RefCell::borrow(&self.parent).id.clone(),
@@ -1167,12 +1162,12 @@ impl Froyo {
                     Some(bd) => {
                         let ld = Rc::new(RefCell::new(try!(LinearDev::create(
                             &dm, &format!("{}-{}", froyo_save.name, num),
-                            &sld.id, bd, &sld.meta_segments, &sld.data_segments))));
+                            bd, &sld.meta_segments, &sld.data_segments))));
 
                         bd.borrow_mut().linear_devs.push(ld.clone());
                         linear_devs.push(ld);
                     },
-                    None => dbgp!("could not find parent for linear device {}", sld.id),
+                    None => dbgp!("could not find parent {} for a linear device", sld.parent),
                 }
             }
 
@@ -1275,7 +1270,6 @@ impl Froyo {
             let linear = Rc::new(RefCell::new(try!(LinearDev::create(
                 &dm,
                 &format!("{}-{}-{}", name, existing_raids, num),
-                &Uuid::new_v4().to_simple_string(),
                 bd,
                 &vec![LinearSegment {
                     start: mdata_sector_start,
