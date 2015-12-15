@@ -735,6 +735,15 @@ struct RaidSegment {
 }
 
 impl RaidSegment {
+    fn new(start: SectorOffset, length: Sectors, parent: Rc<RefCell<RaidDev>>)
+           -> RaidSegment {
+        RaidSegment {
+            start: start,
+            length: length,
+            parent: parent.clone(),
+        }
+    }
+
     fn to_save(&self) -> RaidSegmentSave {
         RaidSegmentSave {
             start: self.start,
@@ -758,49 +767,8 @@ pub struct RaidLinearDev {
 }
 
 impl RaidLinearDev {
-    fn create(dm: &DM, name: &str, parent: &Rc<RefCell<RaidDev>>, start: SectorOffset, len: Sectors)
+    fn create(dm: &DM, name: &str, id: &str, segments: Vec<RaidSegment>)
               -> io::Result<RaidLinearDev> {
-
-        let dev = RefCell::borrow(parent).dev;
-        let params = format!("{}:{} {}",
-                             dev.major, dev.minor, *start);
-        let table = [(0u64, *len, "linear", params)];
-
-        let dm_name = format!("froyo-raid-linear-{}", name);
-        let rl_dev = try!(setup_dm_dev(dm, &dm_name, &table));
-
-        let segment = RaidSegment {
-            start: start,
-            length: len,
-            parent: parent.clone(),
-        };
-
-        Ok(RaidLinearDev {
-            id: Uuid::new_v4().to_simple_string(),
-            dev: rl_dev,
-            segments: vec![segment],
-        })
-    }
-
-    fn from_save(
-        dm: &DM,
-        name: &str,
-        raid_linear_dev: &RaidLinearDevSave,
-        raid_devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
-        -> io::Result<RaidLinearDev> {
-
-        let mut segments = Vec::new();
-        for segment in &raid_linear_dev.segments {
-            let parent = try!(raid_devs.get(&segment.parent).ok_or(
-                io::Error::new(io::ErrorKind::InvalidInput,
-                               "Could not find parent")));
-
-            segments.push(RaidSegment {
-                start: segment.start,
-                length: segment.length,
-                parent: parent.clone(),
-            });
-        }
 
         let mut table = Vec::new();
         let mut offset = SectorOffset(0);
@@ -816,7 +784,7 @@ impl RaidLinearDev {
         let linear_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         Ok(RaidLinearDev {
-            id: raid_linear_dev.id.to_owned(),
+            id: id.to_owned(),
             dev: linear_dev,
             segments: segments,
         })
@@ -863,22 +831,26 @@ impl ThinPoolDev {
         // Put both on the 0th raid.
         // TODO: Improve this, spread across multiple, split, etc.
 
+        // meta
         let meta_name = format!("thin-meta-{}", name);
+        let raid_segments = vec![
+            RaidSegment::new(SectorOffset(0), Sectors(8192), rd.clone())];
         let meta_raid_dev = try!(RaidLinearDev::create(
             dm,
             &meta_name,
-            &rd,
-            SectorOffset(0),
-            Sectors(8192)));
+            &Uuid::new_v4().to_simple_string(),
+            raid_segments));
 
+        // data
         let data_sectors = 1024 * 1024;
-        let meta_name = format!("thin-data-{}", name);
+        let data_name = format!("thin-data-{}", name);
+        let raid_segments = vec![
+            RaidSegment::new(SectorOffset(8192), Sectors(data_sectors), rd.clone())];
         let data_raid_dev = try!(RaidLinearDev::create(
             dm,
-            &meta_name,
-            &rd,
-            SectorOffset(8192),
-            Sectors(data_sectors)));
+            &data_name,
+            &Uuid::new_v4().to_simple_string(),
+            raid_segments));
 
         let data_block_sectors = 2048; // 1MiB
         let low_water_blocks = 512; // 512MiB
@@ -909,19 +881,45 @@ impl ThinPoolDev {
         thin_pool_save: &ThinPoolDevSave,
         raid_devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
         -> Result<ThinPoolDev, FroyoError> {
-        let meta_dev = try!(RaidLinearDev::from_save(
-            dm, name, &thin_pool_save.meta_dev, raid_devs));
-        let data_dev = try!(RaidLinearDev::from_save(
-            dm, name, &thin_pool_save.data_dev, raid_devs));
+
+        // meta
+        let mut raid_segments = Vec::new();
+        for seg in &thin_pool_save.meta_dev.segments {
+            let parent = try!(raid_devs.get(&seg.parent).ok_or(
+                io::Error::new(io::ErrorKind::InvalidInput,
+                               "Could not find parent")));
+            raid_segments.push(RaidSegment::new(seg.start, seg.length, parent.clone()));
+        }
+
+        let meta_raid_dev = try!(RaidLinearDev::create(
+            dm,
+            &name,
+            &thin_pool_save.meta_dev.id,
+            raid_segments));
+
+        // data
+        let mut raid_segments = Vec::new();
+        for seg in &thin_pool_save.data_dev.segments {
+            let parent = try!(raid_devs.get(&seg.parent).ok_or(
+                io::Error::new(io::ErrorKind::InvalidInput,
+                               "Could not find parent")));
+            raid_segments.push(RaidSegment::new(seg.start, seg.length, parent.clone()));
+        }
+
+        let data_raid_dev = try!(RaidLinearDev::create(
+            dm,
+            &name,
+            &thin_pool_save.data_dev.id,
+            raid_segments));
 
         let params = format!("{}:{} {}:{} {} {}",
-                             meta_dev.dev.major,
-                             meta_dev.dev.minor,
-                             data_dev.dev.major,
-                             data_dev.dev.minor,
+                             meta_raid_dev.dev.major,
+                             meta_raid_dev.dev.minor,
+                             data_raid_dev.dev.major,
+                             data_raid_dev.dev.minor,
                              *thin_pool_save.data_block_size,
                              thin_pool_save.low_water_blocks);
-        let table = [(0u64, *data_dev.length(), "thin-pool", params)];
+        let table = [(0u64, *data_raid_dev.length(), "thin-pool", params)];
 
         let dm_name = format!("froyo-thin-pool-{}", name);
         let pool_dev = try!(setup_dm_dev(dm, &dm_name, &table));
@@ -931,8 +929,8 @@ impl ThinPoolDev {
             dev: pool_dev,
             data_block_size: thin_pool_save.data_block_size,
             low_water_blocks: thin_pool_save.low_water_blocks,
-            meta_dev: meta_dev,
-            data_dev: data_dev,
+            meta_dev: meta_raid_dev,
+            data_dev: data_raid_dev,
         })
     }
 
@@ -1183,7 +1181,6 @@ impl Froyo {
             raid_devs.insert(id, rd);
         }
 
-        // TODO use froyo_save values
         let thin_pool_dev = try!(ThinPoolDev::from_save(
             &dm, &froyo_save.name, &froyo_save.thin_pool_dev, &raid_devs));
 
