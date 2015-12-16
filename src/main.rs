@@ -1455,6 +1455,24 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
     Ok(())
 }
 
+fn dump_meta(args: &ArgMatches) -> Result<(), FroyoError> {
+    let name = args.value_of("froyodevname").unwrap();
+    let froyos = try!(Froyo::find_all());
+    for f in &froyos {
+        if name == f.name {
+            let froyo_info = f.to_save();
+            let metadata = try!(serde_json::to_string_pretty(&froyo_info));
+
+            println!("{}", metadata);
+            return Ok(())
+        }
+    }
+
+    println!("Froyodev \"{}\" not found", name);
+
+    Ok(())
+}
+
 fn main() {
 
     let matches = App::new("froyo")
@@ -1529,6 +1547,14 @@ fn main() {
                          .index(2)
                          )
                     )
+        .subcommand(SubCommand::with_name("dump_meta")
+                    .about("Output the JSON metadata for a froyodev")
+                    .arg(Arg::with_name("froyodevname")
+                         .help("Name of the froyodev")
+                         .required(true)
+                         .index(1)
+                         )
+                    )
         .get_matches();
 
     if matches.is_present("debug") {
@@ -1542,6 +1568,7 @@ fn main() {
         ("add", Some(matches)) => add(matches),
         ("remove", Some(matches)) => remove(matches),
         ("create", Some(matches)) => create(matches),
+        ("dump_meta", Some(matches)) => dump_meta(matches),
         ("", None) => {
             println!("No command given, try \"help\"");
             Ok(())
