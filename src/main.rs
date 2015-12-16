@@ -664,9 +664,11 @@ fn clear_dev(dev: &Device) -> io::Result<()> {
         Ok(x) => x,
     };
 
-    let len = try!(blkdev_size(&f));
-    let buf = vec![0u8; len as usize];
-    try!(f.write(&buf));
+    let sectors = try!(blkdev_size(&f)) / SECTOR_SIZE;
+    let buf = vec![0u8; SECTOR_SIZE as usize];
+    for _ in 0..sectors {
+        try!(f.write(&buf));
+    }
 
     Ok(())
 }
