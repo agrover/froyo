@@ -928,6 +928,8 @@ impl ThinPoolDev {
             &Uuid::new_v4().to_simple_string(),
             meta_raid_segments));
 
+        try!(clear_dev(&meta_raid_dev.dev));
+
         // data
         let data_name = format!("thin-data-{}", name);
         let data_raid_dev = try!(RaidLinearDev::create(
