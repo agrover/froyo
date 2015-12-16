@@ -636,7 +636,6 @@ impl LinearDev {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RaidDevSave {
-    id: String,
     stripe_sectors: Sectors,
     region_sectors: Sectors,
     length: Sectors,
@@ -674,7 +673,7 @@ fn clear_dev(dev: &Device) -> io::Result<()> {
 }
 
 impl RaidDev {
-    fn create(dm: &DM, name: &str, devs: &[Rc<RefCell<LinearDev>>],
+    fn create(dm: &DM, name: &str, id: String, devs: Vec<Rc<RefCell<LinearDev>>>,
               stripe: Sectors, region: Sectors)
               -> io::Result<RaidDev> {
 
@@ -697,23 +696,22 @@ impl RaidDev {
                              raid_texts.len(),
                              raid_texts.join(" "));
         let raid_table = [(0u64, *target_length, "raid", params)];
-        let dm_name = format!("froyo-raid5-{}", name);
+        let dm_name = format!("froyo-raid5-{}-{}", name, id);
         let raid_dev = try!(setup_dm_dev(dm, &dm_name, &raid_table));
 
         Ok(RaidDev {
-            id: Uuid::new_v4().to_simple_string(),
+            id: id,
             dev: raid_dev,
             stripe_sectors: stripe,
             region_sectors: region,
             length: target_length,
-            members: devs.to_vec(),
+            members: devs,
             used: Vec::new()
         })
     }
 
     fn to_save(&self) -> RaidDevSave {
         RaidDevSave {
-            id: self.id.clone(),
             stripe_sectors: self.stripe_sectors,
             region_sectors: self.region_sectors,
             length: self.length,
@@ -1050,7 +1048,7 @@ struct FroyoSave {
     name: String,
     id: String,
     block_devs: BTreeMap<String, BlockDevSave>,
-    raid_devs: Vec<RaidDevSave>,
+    raid_devs: BTreeMap<String, RaidDevSave>,
     thin_pool_dev: ThinPoolDevSave,
     thin_devs: Vec<ThinDevSave>,
 }
@@ -1081,7 +1079,7 @@ impl Froyo {
         let mut raid_devs = BTreeMap::new();
         loop {
             if let Some(rd) = try!(
-                Froyo::create_redundant_zone(&dm, name, &block_devs, raid_devs.len(), force)) {
+                Froyo::create_redundant_zone(&dm, name, &block_devs, force)) {
                 raid_devs.insert(rd.id.clone(), Rc::new(RefCell::new(rd)));
             } else {
                 break
@@ -1118,7 +1116,7 @@ impl Froyo {
                 .map(|(id, bd)| (id.clone(), RefCell::borrow(bd).to_save()))
                 .collect(),
             raid_devs: self.raid_devs.iter()
-                .map(|(_, x)| RefCell::borrow(x).to_save())
+                .map(|(id, rd)| (id.clone(), RefCell::borrow(rd).to_save()))
                 .collect(),
             thin_pool_dev: self.thin_pool_dev.to_save(),
             thin_devs: self.thin_devs.iter()
@@ -1198,13 +1196,13 @@ impl Froyo {
         let dm = try!(DM::new());
 
         let mut raid_devs = BTreeMap::new();
-        for (num, srd) in froyo_save.raid_devs.iter().enumerate() {
+        for (id, srd) in froyo_save.raid_devs.iter() {
             let mut linear_devs = Vec::new();
-            for (num, sld) in srd.members.iter().enumerate() {
+            for (m_num, sld) in srd.members.iter().enumerate() {
                 match block_devs.get(&sld.parent) {
                     Some(bd) => {
                         let ld = Rc::new(RefCell::new(try!(LinearDev::create(
-                            &dm, &format!("{}-{}", froyo_save.name, num),
+                            &dm, &format!("{}-{}-{}", froyo_save.name, id, m_num),
                             bd, &sld.meta_segments, &sld.data_segments))));
 
                         bd.borrow_mut().linear_devs.push(ld.clone());
@@ -1217,8 +1215,9 @@ impl Froyo {
             // TODO: handle when devs is less than what's in srd
             let rd = Rc::new(RefCell::new(try!(RaidDev::create(
                 &dm,
-                &format!("{}-{}", froyo_save.name, num),
-                &linear_devs,
+                &froyo_save.name,
+                id.clone(),
+                linear_devs,
                 srd.stripe_sectors,
                 srd.region_sectors))));
 
@@ -1234,7 +1233,7 @@ impl Froyo {
             for seg in &tpd.meta_dev.segments {
                 let parent = try!(raid_devs.get(&seg.parent).ok_or(
                     io::Error::new(io::ErrorKind::InvalidInput,
-                                   "Could not find parent")));
+                                   "Could not find meta's parent")));
                 raid_segments.push(
                     RaidSegment::new(seg.start, seg.length, parent));
             }
@@ -1250,7 +1249,7 @@ impl Froyo {
             for seg in &tpd.data_dev.segments {
                 let parent = try!(raid_devs.get(&seg.parent).ok_or(
                     io::Error::new(io::ErrorKind::InvalidInput,
-                                   "Could not find parent")));
+                                   "Could not find data's parent")));
                 raid_segments.push(
                     RaidSegment::new(seg.start, seg.length, parent));
             }
@@ -1297,7 +1296,6 @@ impl Froyo {
         dm: &DM,
         name: &str,
         block_devs: &BTreeMap<String, Rc<RefCell<BlockDev>>>,
-        existing_raids: usize,
         force: bool)
         -> Result<Option<RaidDev>, FroyoError> {
 
@@ -1345,6 +1343,8 @@ impl Froyo {
         // data size must be multiple of stripe size
         let data_sectors = (common_free_sectors - mdata_sectors) & Sectors(!(*STRIPE_SECTORS-1));
 
+        let raid_uuid = Uuid::new_v4().to_simple_string();
+
         let mut linear_devs = Vec::new();
         for (num, &mut(ref mut bd, (sector_start, _))) in bd_areas.iter_mut().enumerate() {
             let mdata_sector_start = sector_start;
@@ -1352,7 +1352,7 @@ impl Froyo {
 
             let linear = Rc::new(RefCell::new(try!(LinearDev::create(
                 &dm,
-                &format!("{}-{}-{}", name, existing_raids, num),
+                &format!("{}-{}-{}", name, raid_uuid, num),
                 bd,
                 &vec![LinearSegment {
                     start: mdata_sector_start,
@@ -1373,8 +1373,9 @@ impl Froyo {
 
         let raid = try!(RaidDev::create(
             &dm,
-            &format!("{}-{}", name, existing_raids),
-            &linear_devs[..],
+            &name,
+            raid_uuid,
+            linear_devs,
             STRIPE_SECTORS,
             region_sectors));
 
