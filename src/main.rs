@@ -779,11 +779,18 @@ struct RaidSegmentSave {
     parent: String,  // RaidDev id
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct RaidSegment {
     start: SectorOffset,
     length: Sectors,
     parent: Rc<RefCell<RaidDev>>,
+}
+
+impl fmt::Debug for RaidSegment {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({}, {}, {})", *self.start, *self.length,
+               RefCell::borrow(&self.parent).id)
+    }
 }
 
 impl RaidSegment {
