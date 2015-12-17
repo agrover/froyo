@@ -377,10 +377,6 @@ impl Froyo {
         Ok(Some(raid))
     }
 
-    pub fn reshape(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-
     pub fn save_state(&self) -> Result<(), FroyoError> {
         let froyo_info = self.to_save();
         let metadata = try!(serde_json::to_string(&froyo_info));
