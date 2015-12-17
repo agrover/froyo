@@ -48,7 +48,7 @@ use clap::{App, Arg, SubCommand, ArgMatches};
 use uuid::Uuid;
 
 use types::FroyoError;
-use froyo::Froyo;
+use froyo::{Froyo, FroyoStatus, FroyoPerfStatus};
 
 
 
@@ -72,7 +72,20 @@ fn status(args: &ArgMatches) -> Result<(), FroyoError> {
     let name = args.value_of("froyodevname").unwrap();
     match try!(Froyo::find(&name)) {
         Some(f) => {
-            println!("{}: Good", f.name);
+            let (status, perf_status) = try!(f.status());
+
+            let status = match status {
+                FroyoStatus::Good => "good",
+                FroyoStatus::Degraded(_) => "degraded",
+                FroyoStatus::Failed => "failed",
+            };
+
+            let perf_status = match perf_status {
+                FroyoPerfStatus::Good => "not throttled",
+                FroyoPerfStatus::Throttled => "throttled",
+            };
+
+            println!("{}: {}, {}", f.name, status, perf_status);
         },
         None => println!("Froyodev \"{}\" not found", name),
     }

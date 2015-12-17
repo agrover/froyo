@@ -5,10 +5,11 @@
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::io;
+use std::io::ErrorKind;
 use std::cmp::min;
 use std::fmt;
 
-use devicemapper::{DM, Device};
+use devicemapper::{DM, Device, DmFlags};
 
 use types::{Sectors, SectorOffset};
 use blockdev::{LinearDev, LinearDevSave};
@@ -28,11 +29,18 @@ pub struct RaidDevSave {
 pub struct RaidDev {
     pub id: String,
     dev: Device,
+    dm_name: String,
     pub stripe_sectors: Sectors,
     pub region_sectors: Sectors,
     length: Sectors,
     members: Vec<Rc<RefCell<LinearDev>>>,
     used: Vec<Rc<RefCell<RaidSegment>>>,
+}
+
+pub enum RaidStatus {
+    Good,
+    Degraded(usize),
+    Failed,
 }
 
 impl RaidDev {
@@ -65,6 +73,7 @@ impl RaidDev {
         Ok(RaidDev {
             id: id,
             dev: raid_dev,
+            dm_name: dm_name,
             stripe_sectors: stripe,
             region_sectors: region,
             length: target_length,
@@ -132,6 +141,35 @@ impl RaidDev {
         }
 
         (size - needed, segs)
+    }
+
+    pub fn status(&self) -> io::Result<RaidStatus> {
+        let dm = try!(DM::new());
+
+        let (_, mut status) = try!(dm.table_status(&self.dm_name, DmFlags::empty()));
+
+        // See kernel's dm-raid.txt "Status Output"
+        // We should either get 1 line or the kernel is broken
+        let status_line = status.pop().unwrap().3;
+        let health_chars = status_line.split(' ').collect::<Vec<_>>()[2];
+
+        let mut bad = 0;
+        for c in health_chars.chars() {
+            match c {
+                'A' => {},
+                'a' => {},
+                'D' => bad += 1,
+                x @ _ => return Err(io::Error::new(
+                    ErrorKind::InvalidData,
+                    format!("Kernel returned unknown raid health char '{}'", x))),
+            }
+        }
+
+        Ok(match bad {
+            0 => RaidStatus::Good,
+            x @ 1...FROYO_REDUNDANCY => RaidStatus::Degraded(x),
+            _ => RaidStatus::Failed,
+        })
     }
 }
 

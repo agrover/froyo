@@ -19,7 +19,7 @@ use time;
 
 use blockdev::{BlockDev, BlockDevSave};
 use blockdev::{LinearDev, LinearSegment};
-use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev};
+use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus};
 use thin::{ThinPoolDev, ThinPoolDevSave};
 use thin::{ThinDev, ThinDevSave};
 use types::{Sectors, SectorOffset, FroyoError};
@@ -45,6 +45,18 @@ pub struct Froyo {
     raid_devs: BTreeMap<String, Rc<RefCell<RaidDev>>>,
     thin_pool_dev: ThinPoolDev,
     thin_devs: Vec<ThinDev>,
+    throttled: bool,
+}
+
+pub enum FroyoStatus {
+    Good,
+    Degraded(usize),
+    Failed,
+}
+
+pub enum FroyoPerfStatus {
+    Good,
+    Throttled,
 }
 
 impl Froyo {
@@ -100,6 +112,7 @@ impl Froyo {
             raid_devs: raid_devs,
             thin_pool_dev: thin_pool_dev,
             thin_devs: thin_devs,
+            throttled: false,
         })
     }
 
@@ -293,6 +306,7 @@ impl Froyo {
             raid_devs: raid_devs,
             thin_pool_dev: thin_pool_dev,
             thin_devs: thin_devs,
+            throttled: false,
         })
     }
 
@@ -398,6 +412,29 @@ impl Froyo {
         }
 
         Ok(())
+    }
+
+    pub fn status(&self) -> io::Result<(FroyoStatus, FroyoPerfStatus)> {
+
+        let mut status = FroyoStatus::Good;
+        for (_, rd) in &self.raid_devs {
+            let rd = RefCell::borrow(rd);
+            match try!(rd.status()) {
+                RaidStatus::Failed => {
+                    status = FroyoStatus::Failed;
+                    break
+                },
+                RaidStatus::Degraded(x) => status = FroyoStatus::Degraded(x),
+                RaidStatus::Good => {},
+            }
+        }
+
+        let perf_status = match self.throttled {
+            true => FroyoPerfStatus::Throttled,
+            false => FroyoPerfStatus::Good,
+        };
+
+        Ok((status, perf_status))
     }
 }
 
