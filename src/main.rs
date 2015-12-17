@@ -39,8 +39,7 @@ mod raid;
 mod thin;
 mod util;
 
-use std::io;
-use std::io::{Write, ErrorKind};
+use std::io::Write;
 use std::error::Error;
 use std::process::exit;
 use std::path::{Path, PathBuf};
@@ -71,7 +70,12 @@ fn list(_args: &ArgMatches) -> Result<(), FroyoError> {
 
 fn status(args: &ArgMatches) -> Result<(), FroyoError> {
     let name = args.value_of("froyodevname").unwrap();
-    println!("hello from status()");
+    match try!(Froyo::find(&name)) {
+        Some(f) => {
+            println!("{}: Good", f.name);
+        },
+        None => println!("Froyodev \"{}\" not found", name),
+    }
     Ok(())
 }
 
@@ -108,18 +112,11 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
 
 fn dump_meta(args: &ArgMatches) -> Result<(), FroyoError> {
     let name = args.value_of("froyodevname").unwrap();
-    let froyos = try!(Froyo::find_all());
-    for f in &froyos {
-        if name == f.name {
-            let froyo_info = f.to_save();
-            let metadata = try!(serde_json::to_string_pretty(&froyo_info));
-
-            println!("{}", metadata);
-            return Ok(())
-        }
+    match try!(Froyo::find(&name)) {
+        Some(f) =>
+            println!("{}", try!(serde_json::to_string_pretty(&f.to_save()))),
+        None => println!("Froyodev \"{}\" not found", name),
     }
-
-    println!("Froyodev \"{}\" not found", name);
 
     Ok(())
 }

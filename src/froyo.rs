@@ -157,6 +157,17 @@ impl Froyo {
         Ok(froyos)
     }
 
+    pub fn find(name: &str) -> Result<Option<Froyo>, FroyoError> {
+        let froyos = try!(Froyo::find_all());
+        for f in froyos {
+            if name == f.name {
+                return Ok(Some(f))
+            }
+        }
+
+        Ok(None)
+    }
+
     fn from_save(froyo_save: FroyoSave, froyo_id: String, blockdevs: Vec<BlockDev>)
                  -> Result<Froyo, FroyoError> {
         let mut bd_map = blockdevs.into_iter()
