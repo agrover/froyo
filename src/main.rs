@@ -97,17 +97,6 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
         .collect();
     let force = args.is_present("force");
 
-    if dev_paths.len() < 2 {
-        return Err(FroyoError::Io(io::Error::new(
-            ErrorKind::InvalidInput, "At least 2 block devices must be given")))
-    }
-
-    if dev_paths.len() > 8 {
-        return Err(FroyoError::Io(io::Error::new(
-            ErrorKind::InvalidInput,
-            format!("Max supported devices is 8, {} given", dev_paths.len()))))
-    }
-
     let froyo = try!(Froyo::create(name, &Uuid::new_v4().to_simple_string(), &dev_paths, force));
 
     try!(froyo.save_state());

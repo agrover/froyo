@@ -9,6 +9,7 @@ use std::borrow::Borrow;
 use std::path::Path;
 use std::cmp::Ordering;
 use std::io;
+use std::io::ErrorKind;
 use std::error::Error;
 
 use uuid::Uuid;
@@ -55,6 +56,17 @@ impl Froyo {
             let bd = Rc::new(RefCell::new(
                 try!(BlockDev::initialize(&id, path.borrow(), force))));
             block_devs.insert(RefCell::borrow(&bd).id.clone(), bd.clone());
+        }
+
+        if paths.len() < 2 {
+            return Err(FroyoError::Io(io::Error::new(
+                ErrorKind::InvalidInput, "At least 2 block devices must be given")))
+        }
+
+        if paths.len() > 8 {
+            return Err(FroyoError::Io(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("Max supported devices is 8, {} given", paths.len()))))
         }
 
         let dm = try!(DM::new());
