@@ -416,15 +416,16 @@ impl Froyo {
 
     pub fn status(&self) -> io::Result<(FroyoStatus, FroyoPerfStatus)> {
 
-        let mut status = FroyoStatus::Good;
+        let mut f_status = FroyoStatus::Good;
         for (_, rd) in &self.raid_devs {
             let rd = RefCell::borrow(rd);
-            match try!(rd.status()) {
+            let (r_status, _) = try!(rd.status());
+            match r_status {
                 RaidStatus::Failed => {
-                    status = FroyoStatus::Failed;
+                    f_status = FroyoStatus::Failed;
                     break
                 },
-                RaidStatus::Degraded(x) => status = FroyoStatus::Degraded(x),
+                RaidStatus::Degraded(x) => f_status = FroyoStatus::Degraded(x),
                 RaidStatus::Good => {},
             }
         }
@@ -434,7 +435,7 @@ impl Froyo {
             false => FroyoPerfStatus::Good,
         };
 
-        Ok((status, perf_status))
+        Ok((f_status, perf_status))
     }
 }
 

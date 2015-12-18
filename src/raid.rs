@@ -37,10 +37,23 @@ pub struct RaidDev {
     used: Vec<Rc<RefCell<RaidSegment>>>,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum RaidStatus {
     Good,
     Degraded(usize),
     Failed,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RaidAction {
+    Idle,
+    Frozen,
+    Resync,
+    Recover,
+    Check,
+    Repair,
+    Reshape,
+    Unknown,
 }
 
 impl RaidDev {
@@ -143,7 +156,7 @@ impl RaidDev {
         (size - needed, segs)
     }
 
-    pub fn status(&self) -> io::Result<RaidStatus> {
+    pub fn status(&self) -> io::Result<(RaidStatus, RaidAction)> {
         let dm = try!(DM::new());
 
         let (_, mut status) = try!(dm.table_status(&self.dm_name, DmFlags::empty()));
@@ -151,7 +164,8 @@ impl RaidDev {
         // See kernel's dm-raid.txt "Status Output"
         // We should either get 1 line or the kernel is broken
         let status_line = status.pop().unwrap().3;
-        let health_chars = status_line.split(' ').collect::<Vec<_>>()[2];
+        let status_bits = status_line.split(' ').collect::<Vec<_>>();
+        let health_chars = status_bits[2];
 
         let mut bad = 0;
         for c in health_chars.chars() {
@@ -164,12 +178,25 @@ impl RaidDev {
                     format!("Kernel returned unknown raid health char '{}'", x))),
             }
         }
-
-        Ok(match bad {
+        let raid_status = match bad {
             0 => RaidStatus::Good,
             x @ 1...FROYO_REDUNDANCY => RaidStatus::Degraded(x),
             _ => RaidStatus::Failed,
-        })
+        };
+
+
+        let raid_action = match status_bits[4] {
+            "idle" => RaidAction::Idle,
+            "frozen" => RaidAction::Frozen,
+            "resync" => RaidAction::Resync,
+            "recover" => RaidAction::Recover,
+            "check" => RaidAction::Check,
+            "repair" => RaidAction::Repair,
+            "reshape" => RaidAction::Reshape,
+            _ => RaidAction::Unknown,
+        };
+
+        Ok((raid_status, raid_action))
     }
 }
 
