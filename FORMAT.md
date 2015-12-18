@@ -84,34 +84,32 @@ Plus additional temporary devices as needed
 ```json
 {
   "name": "froyodev-1",
-  "id": "3e0e1e09061e4cae8248c24576e4d931",
+  "id": "4a8390f9b22a4c8ba6d38f0de894e8da",
   "block_devs": {
-    "3f85352dea0346fbb2ea846abba66f0f": {
-      "path": "/dev/vdb",
-      "sectors": 16777216
-    },
-    "968287b70dca479682b63c4dfe5a5948": {
+    "53b754ec804142ca8a6b8752b3a94049": {
       "path": "/dev/vdc",
       "sectors": 16777216
     },
-    "c667fab02599442e9a0de7bc0309530b": {
+    "8e8d1998f2ad469fbad00038a0843477": {
+      "path": "/dev/vdb",
+      "sectors": 16777216
+    },
+    "9bc53cef46a2486abbd99fb92e6ae89e": {
       "path": "/dev/vde",
       "sectors": 25165824
     },
-    "e07d78df365c4590bb5c790c487a24a1": {
+    "df85a23bff4146dd844b45deae37d480": {
       "path": "/dev/vdd",
       "sectors": 23068672
     }
   },
-  "raid_devs": [
-    {
-      "id": "1400b1e499e64e3fac1206dbb45fc76b",
+  "raid_devs": {
+    "2a498c1b3ad346c2a0b588b09726bb09": {
       "stripe_sectors": 2048,
       "region_sectors": 8192,
       "length": 50313216,
       "members": [
         {
-          "id": "bc00f415fc3d483090c6c4e75ff8aa5f",
           "meta_segments": [
             {
               "start": 2048,
@@ -124,10 +122,9 @@ Plus additional temporary devices as needed
               "length": 16771072
             }
           ],
-          "parent": "3f85352dea0346fbb2ea846abba66f0f"
+          "parent": "53b754ec804142ca8a6b8752b3a94049"
         },
         {
-          "id": "4f811dc3bb3b4755b0c54514ecbff790",
           "meta_segments": [
             {
               "start": 2048,
@@ -140,10 +137,9 @@ Plus additional temporary devices as needed
               "length": 16771072
             }
           ],
-          "parent": "968287b70dca479682b63c4dfe5a5948"
+          "parent": "8e8d1998f2ad469fbad00038a0843477"
         },
         {
-          "id": "505c1d7af6434f968ec5a6881c48a252",
           "meta_segments": [
             {
               "start": 2048,
@@ -156,10 +152,9 @@ Plus additional temporary devices as needed
               "length": 16771072
             }
           ],
-          "parent": "c667fab02599442e9a0de7bc0309530b"
+          "parent": "9bc53cef46a2486abbd99fb92e6ae89e"
         },
         {
-          "id": "bb8db73b7f044e7ab54dfe1fc6dc6642",
           "meta_segments": [
             {
               "start": 2048,
@@ -172,18 +167,16 @@ Plus additional temporary devices as needed
               "length": 16771072
             }
           ],
-          "parent": "e07d78df365c4590bb5c790c487a24a1"
+          "parent": "df85a23bff4146dd844b45deae37d480"
         }
       ]
     },
-    {
-      "id": "980e1a685e744a73b36ece9a7f5f6f32",
+    "5ea3c67e31a74ca9b22250e8732fc6eb": {
       "stripe_sectors": 2048,
       "region_sectors": 8192,
       "length": 6291456,
       "members": [
         {
-          "id": "728d7c81c8a948fdb36ddbb7910af7f0",
           "meta_segments": [
             {
               "start": 16773152,
@@ -196,10 +189,9 @@ Plus additional temporary devices as needed
               "length": 6291456
             }
           ],
-          "parent": "c667fab02599442e9a0de7bc0309530b"
+          "parent": "9bc53cef46a2486abbd99fb92e6ae89e"
         },
         {
-          "id": "4d12c3dc27fa4a7b99a49b8e5f037404",
           "meta_segments": [
             {
               "start": 16773152,
@@ -212,36 +204,38 @@ Plus additional temporary devices as needed
               "length": 6291456
             }
           ],
-          "parent": "e07d78df365c4590bb5c790c487a24a1"
+          "parent": "df85a23bff4146dd844b45deae37d480"
         }
       ]
     }
-  ],
+  },
   "thin_pool_dev": {
+    "data_block_size": 2048,
+    "low_water_blocks": 512,
     "meta_dev": {
-      "id": "05ec2e691bc0482e9f76be36c0d8acf5",
+      "id": "cfab24ed3ca4469ca6b506d25910b077",
       "segments": [
         {
           "start": 0,
           "length": 8192,
-          "parent": "1400b1e499e64e3fac1206dbb45fc76b"
+          "parent": "2a498c1b3ad346c2a0b588b09726bb09"
         }
       ]
     },
     "data_dev": {
-      "id": "2d27514c21f843f3a24635de771bec36",
+      "id": "f948ad65a5164d36a03c35f7a59f1efb",
       "segments": [
         {
-          "start": 0,
+          "start": 8192,
           "length": 1048576,
-          "parent": "980e1a685e744a73b36ece9a7f5f6f32"
+          "parent": "2a498c1b3ad346c2a0b588b09726bb09"
         }
       ]
     }
   },
   "thin_devs": [
     {
-     "thin_number": 0,
+      "thin_number": 0,
       "fs": "xfs",
       "size": 2147483648
     }
