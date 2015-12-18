@@ -16,7 +16,6 @@ use blockdev::{LinearDev, LinearDevSave};
 use consts::*;
 use util::setup_dm_dev;
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaidDevSave {
     pub stripe_sectors: Sectors,
@@ -229,7 +228,6 @@ impl RaidDev {
             x @ 1...FROYO_REDUNDANCY => RaidStatus::Degraded(x),
             _ => RaidStatus::Failed,
         };
-
 
         let raid_action = match status_bits[4] {
             "idle" => RaidAction::Idle,

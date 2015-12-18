@@ -18,12 +18,9 @@ use crc::crc32;
 use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
 
-
 use types::{Sectors, SectorOffset, FroyoError};
 use consts::*;
 use util::{setup_dm_dev, blkdev_size};
-
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MDA {
