@@ -19,7 +19,7 @@ use time;
 
 use blockdev::{BlockDev, BlockDevSave};
 use blockdev::{LinearDev, LinearSegment};
-use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus};
+use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus, RaidMember};
 use thin::{ThinPoolDev, ThinPoolDevSave};
 use thin::{ThinDev, ThinDevSave};
 use types::{Sectors, SectorOffset, FroyoError};
@@ -86,7 +86,7 @@ impl Froyo {
         let mut raid_devs = BTreeMap::new();
         loop {
             if let Some(rd) = try!(
-                Froyo::create_redundant_zone(&dm, name, &block_devs, force)) {
+                Froyo::create_redundant_zone(&dm, name, &block_devs)) {
                 raid_devs.insert(rd.id.clone(), Rc::new(RefCell::new(rd)));
             } else {
                 break
@@ -225,9 +225,12 @@ impl Froyo {
                             bd, &sld.meta_segments, &sld.data_segments))));
 
                         bd.borrow_mut().linear_devs.push(ld.clone());
-                        linear_devs.push(ld);
+                        linear_devs.push(RaidMember::Present(ld));
                     },
-                    None => dbgp!("could not find parent {} for a linear device", sld.parent),
+                    None => {
+                        dbgp!("could not find parent {} for a linear device", sld.parent);
+                        linear_devs.push(RaidMember::Absent(sld.clone()));
+                    },
                 }
             }
 
@@ -315,8 +318,7 @@ impl Froyo {
     fn create_redundant_zone(
         dm: &DM,
         name: &str,
-        block_devs: &BTreeMap<String, Rc<RefCell<BlockDev>>>,
-        force: bool)
+        block_devs: &BTreeMap<String, Rc<RefCell<BlockDev>>>)
         -> Result<Option<RaidDev>, FroyoError> {
 
         // TODO: Make sure name has only chars we can use in a DM name
@@ -383,12 +385,10 @@ impl Froyo {
                     length: data_sectors,
                     }]))));
 
-            if force {
-                try!(clear_dev(&RefCell::borrow(&linear).meta_dev));
-            }
+            try!(clear_dev(&RefCell::borrow(&linear).meta_dev));
 
             bd.borrow_mut().linear_devs.push(linear.clone());
-            linear_devs.push(linear);
+            linear_devs.push(RaidMember::Present(linear));
         }
 
         let raid = try!(RaidDev::create(

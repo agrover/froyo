@@ -33,7 +33,7 @@ pub struct RaidDev {
     pub stripe_sectors: Sectors,
     pub region_sectors: Sectors,
     length: Sectors,
-    members: Vec<Rc<RefCell<LinearDev>>>,
+    members: Vec<RaidMember>,
     used: Vec<Rc<RefCell<RaidSegment>>>,
 }
 
@@ -56,23 +56,65 @@ pub enum RaidAction {
     Unknown,
 }
 
+#[derive(Debug, Clone)]
+pub enum RaidMember {
+    Present(Rc<RefCell<LinearDev>>),
+    Absent(LinearDevSave),
+}
+
+impl RaidMember {
+    fn present(&self) -> Option<Rc<RefCell<LinearDev>>> {
+        match *self {
+            RaidMember::Present(ref x) => Some(x.clone()),
+            RaidMember::Absent(_) => None,
+        }
+    }
+}
+
 impl RaidDev {
-    pub fn create(dm: &DM, name: &str, id: String, devs: Vec<Rc<RefCell<LinearDev>>>,
+    pub fn create(dm: &DM, name: &str, id: String, devs: Vec<RaidMember>,
               stripe: Sectors, region: Sectors)
               -> io::Result<RaidDev> {
 
         let raid_texts: Vec<_> = devs.iter()
-            .map(|dev| format!("{}:{} {}:{}",
-                               RefCell::borrow(dev).meta_dev.major,
-                               RefCell::borrow(dev).meta_dev.minor,
-                               RefCell::borrow(dev).data_dev.major,
-                               RefCell::borrow(dev).data_dev.minor))
+            .map(|dev|
+                 match *dev {
+                     RaidMember::Present(ref dev) => {
+                         format!("{}:{} {}:{}",
+                                 RefCell::borrow(dev).meta_dev.major,
+                                 RefCell::borrow(dev).meta_dev.minor,
+                                 RefCell::borrow(dev).data_dev.major,
+                                 RefCell::borrow(dev).data_dev.minor)
+                     },
+                     RaidMember::Absent(_) => "- -".to_owned(),
+                 })
             .collect();
 
-        // skip to account for parity devs
-        let target_length = devs.iter().skip(FROYO_REDUNDANCY)
-            .map(|dev| RefCell::borrow(dev).data_length())
-            .sum::<Sectors>();
+        let present_devs = devs.iter().filter_map(|ref x| x.present()).count();
+        if present_devs < (devs.len() - FROYO_REDUNDANCY) {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!(
+                    "Too many missing devs to create raid: {}. Need at least {} of {}",
+                    devs.len() - present_devs, devs.len() - FROYO_REDUNDANCY,
+                    devs.len())))
+        }
+
+        let first_present_dev = devs.iter()
+            .filter_map(|ref x| x.present())
+            .next()
+            .unwrap();
+        let first_present_dev_len = first_present_dev.borrow().data_length();
+
+        // Verify all present devs are the same length
+        if !devs.iter().filter_map(|x| x.present()).all(
+            |x| x.borrow().data_length() == first_present_dev_len) {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput, "RAID member device sizes differ"));
+        }
+
+        let target_length = first_present_dev_len
+            * Sectors::new((devs.len() - FROYO_REDUNDANCY) as u64);
 
         let params = format!("raid5_ls 3 {} region_size {} {} {}",
                              *stripe,
@@ -101,7 +143,11 @@ impl RaidDev {
             region_sectors: self.region_sectors,
             length: self.length,
             members: self.members.iter()
-                .map(|dev| RefCell::borrow(dev).to_save())
+                .map(|dev|
+                     match *dev {
+                         RaidMember::Present(ref x) => RefCell::borrow(x).to_save(),
+                         RaidMember::Absent(ref x) => x.clone(),
+                     })
                 .collect(),
         }
     }

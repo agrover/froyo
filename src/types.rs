@@ -19,6 +19,7 @@ use serde_json;
 custom_derive! {
     #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
+             NewtypeMul,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct Sectors(u64);
 }
@@ -55,6 +56,7 @@ impl serde::Deserialize for Sectors {
 custom_derive! {
     #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
+             NewtypeMul,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct SectorOffset(u64);
 }
