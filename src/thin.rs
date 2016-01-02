@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::io;
 use std::error::Error;
 
-use devicemapper::{DM, Device};
+use devicemapper::{DM, Device, DevId};
 use uuid::Uuid;
 
 use types::Sectors;
@@ -164,7 +164,8 @@ impl ThinDev {
         size: Sectors,
         pool_dev: &ThinPoolDev)
         -> io::Result<ThinDev> {
-        match dm.target_msg(&pool_dev.dm_name, 0, &format!("create_thin {}", thin_number)) {
+        match dm.target_msg(&DevId::Name(&pool_dev.dm_name),
+                            0, &format!("create_thin {}", thin_number)) {
             Err(x) => dbgp!("create_thin message failed: {}", x.description()),
             Ok(_) => {},
         }

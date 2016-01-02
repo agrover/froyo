@@ -8,7 +8,7 @@ use std::io::{Write, ErrorKind};
 use std::borrow::Borrow;
 use std::os::unix::prelude::AsRawFd;
 
-use devicemapper::{DM, Device, DmFlags};
+use devicemapper::{DM, Device, DmFlags, DevId};
 use nix::sys::ioctl;
 
 use consts::*;
@@ -35,14 +35,16 @@ pub fn setup_dm_dev<T1, T2>(dm: &DM, name: &str, targets: &[(u64, u64, T1, T2)])
         where T1: Borrow<str>,
               T2: Borrow<str>,
 {
-    if let Ok(di) = dm.device_status(name) {
+    let id = &DevId::Name(name);
+
+    if let Ok(di) = dm.device_status(id) {
         dbgp!("Found {}", name);
         return Ok(di.device())
     }
 
     try!(dm.device_create(&name, None, DmFlags::empty()));
-    let di = try!(dm.table_load(&name, &targets));
-    try!(dm.device_suspend(&name, DmFlags::empty()));
+    let di = try!(dm.table_load(id, &targets));
+    try!(dm.device_suspend(id, DmFlags::empty()));
 
     dbgp!("Created {}", name);
 

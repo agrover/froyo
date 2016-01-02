@@ -9,7 +9,7 @@ use std::io::ErrorKind;
 use std::cmp::min;
 use std::fmt;
 
-use devicemapper::{DM, Device, DmFlags};
+use devicemapper::{DM, Device, DmFlags, DevId};
 
 use types::{Sectors, SectorOffset};
 use blockdev::{LinearDev, LinearDevSave};
@@ -204,7 +204,7 @@ impl RaidDev {
     pub fn status(&self) -> io::Result<(RaidStatus, RaidAction)> {
         let dm = try!(DM::new());
 
-        let (_, mut status) = try!(dm.table_status(&self.dm_name, DmFlags::empty()));
+        let (_, mut status) = try!(dm.table_status(&DevId::Name(&self.dm_name), DmFlags::empty()));
 
         // See kernel's dm-raid.txt "Status Output"
         // We should either get 1 line or the kernel is broken
