@@ -127,7 +127,7 @@ fn dump_meta(args: &ArgMatches) -> Result<(), FroyoError> {
     let name = args.value_of("froyodevname").unwrap();
     match try!(Froyo::find(&name)) {
         Some(f) =>
-            println!("{}", try!(serde_json::to_string_pretty(&f.to_save()))),
+            println!("{}", try!(f.to_metadata_pretty())),
         None => println!("Froyodev \"{}\" not found", name),
     }
 

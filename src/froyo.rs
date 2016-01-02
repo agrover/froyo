@@ -116,7 +116,7 @@ impl Froyo {
         })
     }
 
-    pub fn to_save(&self) -> FroyoSave {
+    fn to_save(&self) -> FroyoSave {
         FroyoSave {
             name: self.name.to_owned(),
             id: self.id.to_owned(),
@@ -131,6 +131,14 @@ impl Froyo {
                 .map(|x| x.to_save())
                 .collect(),
         }
+    }
+
+    pub fn to_metadata(&self) -> Result<String, FroyoError> {
+        Ok(try!(serde_json::to_string(&self.to_save())))
+    }
+
+    pub fn to_metadata_pretty(&self) -> Result<String, FroyoError> {
+        Ok(try!(serde_json::to_string_pretty(&self.to_save())))
     }
 
     pub fn find_all() -> Result<Vec<Froyo>, FroyoError> {
@@ -403,8 +411,7 @@ impl Froyo {
     }
 
     pub fn save_state(&self) -> Result<(), FroyoError> {
-        let froyo_info = self.to_save();
-        let metadata = try!(serde_json::to_string(&froyo_info));
+        let metadata = try!(self.to_metadata());
         let current_time = time::now().to_timespec();
 
         for (_, bd) in &self.block_devs {
