@@ -7,13 +7,18 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::io;
 use std::error::Error;
+use std::process::Command;
+use std::fs;
+use std::path::PathBuf;
 
-use devicemapper::{DM, Device, DevId};
+use devicemapper::{DM, Device, DmFlags, DevId};
 use uuid::Uuid;
+use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
 
 use types::Sectors;
 use raid::{RaidDev, RaidSegment, RaidLinearDev, RaidLinearDevSave};
 use util::{clear_dev, setup_dm_dev};
+use types::FroyoError;
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,7 +40,6 @@ pub struct ThinPoolDev {
 }
 
 impl ThinPoolDev {
-
     fn get_raid_segments(sectors: Sectors, devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
                          -> Option<Vec<Rc<RefCell<RaidSegment>>>> {
         let mut needed = sectors;
@@ -60,7 +64,7 @@ impl ThinPoolDev {
               -> io::Result<ThinPoolDev> {
 
         let meta_size = Sectors::new(8192);
-        let data_size = Sectors::new(1024 * 1024);
+        let data_size = Sectors::new(2 * 2 * 1024 * 1024);
 
         let meta_raid_segments = try!(ThinPoolDev::get_raid_segments(meta_size, devs).ok_or(
             io::Error::new(io::ErrorKind::InvalidInput,
@@ -152,7 +156,8 @@ pub struct ThinDev {
     dev: Device,
     thin_number: u32,
     fs: String,
-    size: Sectors,
+    pub size: Sectors,
+    dm_name: String,
 }
 
 impl ThinDev {
@@ -181,6 +186,7 @@ impl ThinDev {
             thin_number: thin_number,
             fs: fs.to_owned(),
             size: size,
+            dm_name: dm_name,
         })
     }
 
@@ -191,5 +197,54 @@ impl ThinDev {
             size: self.size,
         }
     }
-}
 
+    pub fn status(&self) -> Result<Sectors, FroyoError> {
+        let dm = try!(DM::new());
+
+        let (_, mut status) = try!(
+            dm.table_status(&DevId::Name(&self.dm_name), DmFlags::empty()));
+
+        // We should either get 1 line or the kernel is broken
+        let status_line = status.pop().unwrap().3;
+        let status_vals = status_line.split(' ').collect::<Vec<_>>();
+
+        Ok(Sectors::new(status_vals[0].parse::<u64>().unwrap()))
+    }
+
+    pub fn create_devnode(&mut self, name: &str) -> Result<(), FroyoError> {
+        let mut pathbuf = PathBuf::from("/dev/froyo");
+
+        match fs::create_dir(&pathbuf) {
+            Ok(()) => {},
+            Err(e) => {
+                match e.kind() {
+                    io::ErrorKind::AlreadyExists => {},
+                    _ => return Err(FroyoError::Io(e)),
+                }
+            }
+        }
+
+        pathbuf.push(name);
+
+        let old_umask = umask(Mode::empty());
+        try!(mknod(&pathbuf, S_IFBLK, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP, self.dev.into()));
+        umask(old_umask);
+
+        Ok(())
+    }
+
+    pub fn create_fs(&mut self, name: &str) -> Result<(), FroyoError> {
+        let dev_name = format!("/dev/froyo/{}", name);
+        let output = try!(Command::new("mkfs.xfs")
+            .arg("-f")
+            .arg(&dev_name)
+            .output());
+
+        if output.status.success(){
+            dbgp!("Created xfs filesystem on {}", dev_name)
+        } else {
+            println!("err {}", String::from_utf8_lossy(&output.stderr));
+        }
+        Ok(())
+    }
+}

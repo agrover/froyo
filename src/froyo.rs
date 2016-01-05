@@ -102,8 +102,12 @@ impl Froyo {
             name,
             0,
             "xfs",
-            Sectors::new(1024 * 1024 * 1024 * 1024 / SECTOR_SIZE),
+            // Sectors::new(1024 * 1024 * 1024 * 1024 / SECTOR_SIZE),
+            Sectors::new(1024 * 1024 * 1024 / SECTOR_SIZE),
             &thin_pool_dev)));
+
+        try!(thin_devs[0].create_devnode(name));
+        try!(thin_devs[0].create_fs(name));
 
         Ok(Froyo {
             name: name.to_owned(),
@@ -421,7 +425,8 @@ impl Froyo {
         Ok(())
     }
 
-    pub fn status(&self) -> io::Result<(FroyoStatus, FroyoPerfStatus)> {
+    pub fn status(&self)
+                  -> Result<(FroyoStatus, FroyoPerfStatus, (Sectors, Sectors)), FroyoError> {
 
         let mut f_status = FroyoStatus::Good;
         for (_, rd) in &self.raid_devs {
@@ -442,7 +447,11 @@ impl Froyo {
             false => FroyoPerfStatus::Good,
         };
 
-        Ok((f_status, perf_status))
+        // TODO: this is returning thin sectors rather than thinpool blocks,
+        // which is probably more what we want (esp. if we're allowing multiple
+        // thin devs)
+        let thin_sectors_used = try!(self.thin_devs[0].status());
+        Ok((f_status, perf_status, (thin_sectors_used, self.thin_devs[0].size)))
     }
 }
 

@@ -72,7 +72,7 @@ fn status(args: &ArgMatches) -> Result<(), FroyoError> {
     let name = args.value_of("froyodevname").unwrap();
     match try!(Froyo::find(&name)) {
         Some(f) => {
-            let (status, perf_status) = try!(f.status());
+            let (status, perf_status, (a, b)) = try!(f.status());
 
             let status = match status {
                 FroyoStatus::Good => "good",
@@ -85,7 +85,7 @@ fn status(args: &ArgMatches) -> Result<(), FroyoError> {
                 FroyoPerfStatus::Throttled => "throttled",
             };
 
-            println!("{}: {}, {}", f.name, status, perf_status);
+            println!("{}: {}, {} {}/{}", f.name, status, perf_status, *a, *b);
         },
         None => println!("Froyodev \"{}\" not found", name),
     }
