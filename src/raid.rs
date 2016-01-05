@@ -11,7 +11,7 @@ use std::fmt;
 
 use devicemapper::{DM, Device, DmFlags, DevId};
 
-use types::{Sectors, SectorOffset};
+use types::{Sectors, SectorOffset, FroyoError};
 use blockdev::{LinearDev, LinearDevSave};
 use consts::*;
 use util::setup_dm_dev;
@@ -200,35 +200,45 @@ impl RaidDev {
         (size - needed, segs)
     }
 
-    pub fn status(&self) -> io::Result<(RaidStatus, RaidAction)> {
+    pub fn status(&self) -> Result<(RaidStatus, RaidAction), FroyoError> {
         let dm = try!(DM::new());
 
         let (_, mut status) = try!(dm.table_status(&DevId::Name(&self.dm_name), DmFlags::empty()));
 
+        if status.len() != 1 {
+            return Err(FroyoError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Expected 1 line from raid status")))
+        }
+
         // See kernel's dm-raid.txt "Status Output"
-        // We should either get 1 line or the kernel is broken
         let status_line = status.pop().unwrap().3;
-        let status_bits = status_line.split(' ').collect::<Vec<_>>();
-        let health_chars = status_bits[2];
+        let status_vals = status_line.split(' ').collect::<Vec<_>>();
+        if status_vals.len() < 5 {
+            return Err(FroyoError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Kernel returned too few values from raid status")))
+        }
 
         let mut bad = 0;
-        for c in health_chars.chars() {
+        for c in status_vals[2].chars() {
             match c {
                 'A' => {},
                 'a' => {},
                 'D' => bad += 1,
-                x @ _ => return Err(io::Error::new(
+                x @ _ => return Err(FroyoError::Io(io::Error::new(
                     ErrorKind::InvalidData,
-                    format!("Kernel returned unknown raid health char '{}'", x))),
+                    format!("Kernel returned unknown raid health char '{}'", x)))),
             }
         }
+
         let raid_status = match bad {
             0 => RaidStatus::Good,
             x @ 1...FROYO_REDUNDANCY => RaidStatus::Degraded(x),
             _ => RaidStatus::Failed,
         };
 
-        let raid_action = match status_bits[4] {
+        let raid_action = match status_vals[4] {
             "idle" => RaidAction::Idle,
             "frozen" => RaidAction::Frozen,
             "resync" => RaidAction::Resync,

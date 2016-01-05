@@ -20,8 +20,8 @@ use time;
 use blockdev::{BlockDev, BlockDevSave};
 use blockdev::{LinearDev, LinearSegment};
 use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus, RaidMember};
-use thin::{ThinPoolDev, ThinPoolDevSave};
-use thin::{ThinDev, ThinDevSave};
+use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus};
+use thin::{ThinDev, ThinDevSave, ThinStatus};
 use types::{Sectors, SectorOffset, FroyoError};
 use util::{align_to, clear_dev};
 use consts::*;
@@ -49,13 +49,15 @@ pub struct Froyo {
 }
 
 pub enum FroyoStatus {
-    Good,
-    Degraded(usize),
-    Failed,
+    Good(FroyoWorkingStatus),
+    RaidFailed,
+    ThinPoolFailed,
+    ThinFailed,
 }
 
-pub enum FroyoPerfStatus {
+pub enum FroyoWorkingStatus {
     Good,
+    Degraded(usize),
     Throttled,
 }
 
@@ -426,32 +428,38 @@ impl Froyo {
     }
 
     pub fn status(&self)
-                  -> Result<(FroyoStatus, FroyoPerfStatus, (Sectors, Sectors)), FroyoError> {
+                  -> Result<FroyoStatus, FroyoError> {
 
-        let mut f_status = FroyoStatus::Good;
+        let mut degraded = 0;
         for (_, rd) in &self.raid_devs {
             let rd = RefCell::borrow(rd);
             let (r_status, _) = try!(rd.status());
             match r_status {
-                RaidStatus::Failed => {
-                    f_status = FroyoStatus::Failed;
-                    break
-                },
-                RaidStatus::Degraded(x) => f_status = FroyoStatus::Degraded(x),
+                RaidStatus::Failed => return Ok(FroyoStatus::RaidFailed),
+                RaidStatus::Degraded(_) => degraded += 1,
                 RaidStatus::Good => {},
             }
         }
 
-        let perf_status = match self.throttled {
-            true => FroyoPerfStatus::Throttled,
-            false => FroyoPerfStatus::Good,
+        if let ThinPoolStatus::Fail = try!(self.thin_pool_dev.status()) {
+            return Ok(FroyoStatus::ThinPoolFailed)
+        }
+
+        if let ThinStatus::Fail = try!(self.thin_devs[0].status()) {
+            return Ok(FroyoStatus::ThinFailed)
+        }
+
+        let working_status = {
+            if degraded != 0 {
+                FroyoWorkingStatus::Degraded(degraded)
+            } else if self.throttled {
+                FroyoWorkingStatus::Throttled
+            } else {
+                FroyoWorkingStatus::Good
+            }
         };
 
-        // TODO: this is returning thin sectors rather than thinpool blocks,
-        // which is probably more what we want (esp. if we're allowing multiple
-        // thin devs)
-        let thin_sectors_used = try!(self.thin_devs[0].status());
-        Ok((f_status, perf_status, (thin_sectors_used, self.thin_devs[0].size)))
+        Ok(FroyoStatus::Good(working_status))
     }
 }
 

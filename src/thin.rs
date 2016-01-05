@@ -39,6 +39,22 @@ pub struct ThinPoolDev {
     data_dev: RaidLinearDev,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ThinPoolBlockUsage {
+    pub used_meta: u64,
+    pub total_meta: u64,
+    pub used_data: u64,
+    pub total_data: u64,
+}
+
+pub enum ThinPoolStatus {
+    Good(ThinPoolBlockUsage),
+    ReadOnly(ThinPoolBlockUsage),
+    OutOfSpace(ThinPoolBlockUsage),
+    NeedsCheck(ThinPoolBlockUsage),
+    Fail,
+}
+
 impl ThinPoolDev {
     fn get_raid_segments(sectors: Sectors, devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
                          -> Option<Vec<Rc<RefCell<RaidSegment>>>> {
@@ -142,6 +158,59 @@ impl ThinPoolDev {
             data_dev: self.data_dev.to_save(),
         }
     }
+
+    pub fn status(&self) -> Result<ThinPoolStatus, FroyoError> {
+        let dm = try!(DM::new());
+
+        let (_, mut status) = try!(
+            dm.table_status(&DevId::Name(&self.dm_name), DmFlags::empty()));
+
+        if status.len() != 1 {
+            return Err(FroyoError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Expected 1 line from thin pool status")))
+        }
+
+        let status_line = status.pop().unwrap().3;
+        if status_line.starts_with("Fail") {
+            return Ok(ThinPoolStatus::Fail)
+        }
+
+        let status_vals = status_line.split(' ').collect::<Vec<_>>();
+        if status_vals.len() < 8 {
+            return Err(FroyoError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Kernel returned too few values from thin pool status")))
+        }
+
+        let usage = {
+            let meta_vals = status_vals[1].split('/').collect::<Vec<_>>();
+            let data_vals = status_vals[2].split('/').collect::<Vec<_>>();
+            ThinPoolBlockUsage {
+                used_meta: meta_vals[0].parse::<u64>().unwrap(),
+                total_meta: meta_vals[1].parse::<u64>().unwrap(),
+                used_data: data_vals[0].parse::<u64>().unwrap(),
+                total_data: data_vals[1].parse::<u64>().unwrap(),
+            }
+        };
+
+        match status_vals[7] {
+            "-" => {},
+            "needs_check" => return Ok(ThinPoolStatus::NeedsCheck(usage)),
+            _ => return Err(FroyoError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Kernel returned unexpected value in thin pool status")))
+        }
+
+        match status_vals[4] {
+            "rw" => return Ok(ThinPoolStatus::Good(usage)),
+            "ro" => return Ok(ThinPoolStatus::ReadOnly(usage)),
+            "out_of_data_space" => return Ok(ThinPoolStatus::OutOfSpace(usage)),
+            _ => return Err(FroyoError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Kernel returned unexpected value in thin pool status")))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +227,11 @@ pub struct ThinDev {
     fs: String,
     pub size: Sectors,
     dm_name: String,
+}
+
+pub enum ThinStatus {
+    Good(Sectors),
+    Fail,
 }
 
 impl ThinDev {
@@ -198,17 +272,26 @@ impl ThinDev {
         }
     }
 
-    pub fn status(&self) -> Result<Sectors, FroyoError> {
+    pub fn status(&self) -> Result<ThinStatus, FroyoError> {
         let dm = try!(DM::new());
 
         let (_, mut status) = try!(
             dm.table_status(&DevId::Name(&self.dm_name), DmFlags::empty()));
 
+        if status.len() != 1 {
+            return Err(FroyoError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Expected 1 line from thin status")))
+        }
+
         // We should either get 1 line or the kernel is broken
         let status_line = status.pop().unwrap().3;
+        if status_line.starts_with("Fail") {
+            return Ok(ThinStatus::Fail)
+        }
         let status_vals = status_line.split(' ').collect::<Vec<_>>();
 
-        Ok(Sectors::new(status_vals[0].parse::<u64>().unwrap()))
+        Ok(ThinStatus::Good(Sectors::new(status_vals[0].parse::<u64>().unwrap())))
     }
 
     pub fn create_devnode(&mut self, name: &str) -> Result<(), FroyoError> {
