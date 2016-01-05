@@ -191,11 +191,11 @@ impl BlockDev {
 
     pub fn find_all() -> Result<Vec<BlockDev>, FroyoError> {
         Ok(try!(read_dir("/dev"))
-            .into_iter()
-            .filter_map(|dir_e| if dir_e.is_ok()
-                        { Some(dir_e.unwrap().path()) } else { None } )
-            .filter_map(|path| { BlockDev::new(&path).ok() })
-            .collect::<Vec<_>>())
+           .into_iter()
+           .filter_map(|dir_e| if dir_e.is_ok()
+                       { Some(dir_e.unwrap().path()) } else { None } )
+           .filter_map(|path| { BlockDev::new(&path).ok() })
+           .collect::<Vec<_>>())
     }
 
     fn used_areas(&self) -> Vec<(SectorOffset, Sectors)> {
@@ -265,7 +265,7 @@ impl BlockDev {
         if younger_mda.crc != crc32::checksum_ieee(&buf) {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput, "Froyo MDA CRC failed"))
-                // TODO: Read backup copy
+            // TODO: Read backup copy
         }
 
         Ok(buf)

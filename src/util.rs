@@ -31,9 +31,9 @@ pub fn blkdev_size(file: &File) -> io::Result<u64> {
 }
 
 pub fn setup_dm_dev<T1, T2>(dm: &DM, name: &str, targets: &[(u64, u64, T1, T2)])
-                    -> io::Result<Device>
-        where T1: Borrow<str>,
-              T2: Borrow<str>,
+                            -> io::Result<Device>
+    where T1: Borrow<str>,
+          T2: Borrow<str>,
 {
     let id = &DevId::Name(name);
 

@@ -61,7 +61,7 @@ impl ThinPoolDev {
     }
 
     pub fn new(dm: &DM, name: &str, devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
-              -> io::Result<ThinPoolDev> {
+               -> io::Result<ThinPoolDev> {
 
         let meta_size = Sectors::new(8192);
         let data_size = Sectors::new(2 * 2 * 1024 * 1024);
@@ -236,9 +236,9 @@ impl ThinDev {
     pub fn create_fs(&mut self, name: &str) -> Result<(), FroyoError> {
         let dev_name = format!("/dev/froyo/{}", name);
         let output = try!(Command::new("mkfs.xfs")
-            .arg("-f")
-            .arg(&dev_name)
-            .output());
+                          .arg("-f")
+                          .arg(&dev_name)
+                          .output());
 
         if output.status.success(){
             dbgp!("Created xfs filesystem on {}", dev_name)

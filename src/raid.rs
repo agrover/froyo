@@ -72,9 +72,8 @@ impl RaidMember {
 
 impl RaidDev {
     pub fn create(dm: &DM, name: &str, id: String, devs: Vec<RaidMember>,
-              stripe: Sectors, region: Sectors)
-              -> io::Result<RaidDev> {
-
+                  stripe: Sectors, region: Sectors)
+                  -> io::Result<RaidDev> {
         let raid_texts: Vec<_> = devs.iter()
             .map(|dev|
                  match *dev {

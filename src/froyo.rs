@@ -204,7 +204,7 @@ impl Froyo {
             match bd_map.remove(id) {
                 Some(x) => { block_devs.insert(id.clone(), Rc::new(RefCell::new(x))); },
                 None => ::dbgp!("missing a blockdev: id {} path {}", id,
-                              sbd.path.display()),
+                                sbd.path.display()),
             }
         }
 
@@ -372,8 +372,8 @@ impl Froyo {
 
         // each region needs 1 bit in the write intent bitmap
         let mdata_sectors = Sectors::new(align_to(8192 + (*region_count / 8) , SECTOR_SIZE)
-                                    .next_power_of_two()
-                                    / SECTOR_SIZE);
+                                         .next_power_of_two()
+                                         / SECTOR_SIZE);
         // data size must be multiple of stripe size
         let data_sectors = (common_free_sectors - mdata_sectors) & Sectors::new(!(*STRIPE_SECTORS-1));
 
@@ -395,7 +395,7 @@ impl Froyo {
                 &vec![LinearSegment {
                     start: data_sector_start,
                     length: data_sectors,
-                    }]))));
+                }]))));
 
             try!(clear_dev(&RefCell::borrow(&linear).meta_dev));
 
