@@ -461,5 +461,38 @@ impl Froyo {
 
         Ok(FroyoStatus::Good(working_status))
     }
+
+    pub fn free_redundant_space(&self) -> Result<Sectors, FroyoError> {
+        let raid_space = self.raid_devs.iter()
+            .map(|(_, rd)| rd)
+            .map(|rd| RefCell::borrow(rd).free_sectors())
+            .sum::<Sectors>();
+
+        let free_data_blocks = match try!(self.thin_pool_dev.status()) {
+            ThinPoolStatus::Good((_, usage)) => {
+                usage.total_data - usage.used_data
+            },
+            ThinPoolStatus::Fail => {
+                return Err(FroyoError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Can't get free blocks from a failed thin pool dev")))
+            },
+        };
+
+        dbgp!("raid free sectors {} unused TP data blocks {}",
+              *raid_space, free_data_blocks);
+
+        let tp_space = Sectors::new(
+            free_data_blocks * *self.thin_pool_dev.data_block_size);
+
+        Ok(raid_space + tp_space)
+    }
+
+    pub fn total_redundant_space(&self) -> Sectors {
+        self.raid_devs.iter()
+            .map(|(_, rd)| rd)
+            .map(|rd| RefCell::borrow(rd).length)
+            .sum::<Sectors>()
+    }
 }
 

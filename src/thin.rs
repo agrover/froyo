@@ -33,7 +33,7 @@ pub struct ThinPoolDevSave {
 pub struct ThinPoolDev {
     dm_name: String,
     dev: Device,
-    data_block_size: Sectors,
+    pub data_block_size: Sectors,
     low_water_blocks: u64, // in # of blocks
     meta_dev: RaidLinearDev,
     data_dev: RaidLinearDev,
@@ -48,11 +48,15 @@ pub struct ThinPoolBlockUsage {
 }
 
 pub enum ThinPoolStatus {
-    Good(ThinPoolBlockUsage),
-    ReadOnly(ThinPoolBlockUsage),
-    OutOfSpace(ThinPoolBlockUsage),
-    NeedsCheck(ThinPoolBlockUsage),
+    Good((ThinPoolWorkingStatus, ThinPoolBlockUsage)),
     Fail,
+}
+
+pub enum ThinPoolWorkingStatus {
+    Good,
+    ReadOnly,
+    OutOfSpace,
+    NeedsCheck,
 }
 
 impl ThinPoolDev {
@@ -196,16 +200,20 @@ impl ThinPoolDev {
 
         match status_vals[7] {
             "-" => {},
-            "needs_check" => return Ok(ThinPoolStatus::NeedsCheck(usage)),
+            "needs_check" => return Ok(ThinPoolStatus::Good(
+                (ThinPoolWorkingStatus::NeedsCheck, usage))),
             _ => return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Kernel returned unexpected value in thin pool status")))
         }
 
         match status_vals[4] {
-            "rw" => return Ok(ThinPoolStatus::Good(usage)),
-            "ro" => return Ok(ThinPoolStatus::ReadOnly(usage)),
-            "out_of_data_space" => return Ok(ThinPoolStatus::OutOfSpace(usage)),
+            "rw" => return Ok(ThinPoolStatus::Good(
+                (ThinPoolWorkingStatus::Good, usage))),
+            "ro" => return Ok(ThinPoolStatus::Good(
+                (ThinPoolWorkingStatus::ReadOnly, usage))),
+            "out_of_data_space" => return Ok(ThinPoolStatus::Good(
+                (ThinPoolWorkingStatus::OutOfSpace, usage))),
             _ => return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Kernel returned unexpected value in thin pool status")))

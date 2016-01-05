@@ -79,7 +79,11 @@ fn status(args: &ArgMatches) -> Result<(), FroyoError> {
                 FroyoStatus::ThinFailed => "Thin device failed",
             };
 
-            println!("Status: {}", status);
+            let space = try!(f.free_redundant_space());
+            let total = f.total_redundant_space();
+
+            println!("Status: {}, {} of {} sectors free", status,
+                     *space, *total);
         },
         None => println!("Froyodev \"{}\" not found", name),
     }

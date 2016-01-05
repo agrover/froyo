@@ -31,7 +31,7 @@ pub struct RaidDev {
     dm_name: String,
     pub stripe_sectors: Sectors,
     pub region_sectors: Sectors,
-    length: Sectors,
+    pub length: Sectors,
     members: Vec<RaidMember>,
     used: Vec<Rc<RefCell<RaidSegment>>>,
 }
@@ -178,6 +178,12 @@ impl RaidDev {
             });
 
         free_vec
+    }
+
+    pub fn free_sectors(&self) -> Sectors {
+        self.free_areas().into_iter()
+            .map(|(_, len)| len)
+            .sum()
     }
 
     // Find some sector ranges that could be allocated. If more sectors are needed than
