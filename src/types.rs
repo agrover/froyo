@@ -91,6 +91,43 @@ impl serde::Deserialize for SectorOffset {
     }
 }
 
+// A type for Data Blocks as used by the thin pool.
+custom_derive! {
+    #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
+             NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
+             NewtypeMul,
+             Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+    pub struct DataBlocks(u64);
+}
+
+impl DataBlocks {
+    pub const fn new(val: u64) -> DataBlocks {
+        DataBlocks(val)
+    }
+}
+
+impl Zero for DataBlocks {
+    fn zero() -> Self {
+        DataBlocks(0)
+    }
+}
+
+impl serde::Serialize for DataBlocks {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: serde::Serializer,
+    {
+        serializer.visit_u64(**self)
+    }
+}
+
+impl serde::Deserialize for DataBlocks {
+    fn deserialize<D>(deserializer: &mut D) -> Result<DataBlocks, D::Error>
+        where D: serde::de::Deserializer
+    {
+        let val = try!(serde::Deserialize::deserialize(deserializer));
+        Ok(DataBlocks(val))
+    }
+}
 
 // Define a common error enum.
 // See http://blog.burntsushi.net/rust-error-handling/

@@ -15,16 +15,14 @@ use devicemapper::{DM, Device, DmFlags, DevId};
 use uuid::Uuid;
 use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
 
-use types::Sectors;
+use types::{Sectors, DataBlocks, FroyoError};
 use raid::{RaidDev, RaidSegment, RaidLinearDev, RaidLinearDevSave};
 use util::{clear_dev, setup_dm_dev};
-use types::FroyoError;
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinPoolDevSave {
     pub data_block_size: Sectors,
-    pub low_water_blocks: u64,
+    pub low_water_blocks: DataBlocks,
     pub meta_dev: RaidLinearDevSave,
     pub data_dev: RaidLinearDevSave,
 }
@@ -34,7 +32,7 @@ pub struct ThinPoolDev {
     dm_name: String,
     dev: Device,
     pub data_block_size: Sectors,
-    low_water_blocks: u64, // in # of blocks
+    low_water_blocks: DataBlocks,
     meta_dev: RaidLinearDev,
     data_dev: RaidLinearDev,
 }
@@ -112,7 +110,7 @@ impl ThinPoolDev {
             data_raid_segments));
 
         let data_block_size = Sectors::new(2048); // 1MiB
-        let low_water_blocks = 512; // 512MiB
+        let low_water_blocks = DataBlocks::new(512); // 512MiB
 
         ThinPoolDev::create(
             dm,
@@ -127,7 +125,7 @@ impl ThinPoolDev {
         dm: &DM,
         name: &str,
         data_block_size: Sectors,
-        low_water_blocks: u64,
+        low_water_blocks: DataBlocks,
         meta_raid_dev: RaidLinearDev,
         data_raid_dev: RaidLinearDev)
         -> io::Result<ThinPoolDev> {
@@ -138,7 +136,7 @@ impl ThinPoolDev {
                              data_raid_dev.dev.major,
                              data_raid_dev.dev.minor,
                              *data_block_size,
-                             low_water_blocks);
+                             *low_water_blocks);
         let table = [(0u64, *data_raid_dev.length(), "thin-pool", params)];
 
         let dm_name = format!("froyo-thin-pool-{}", name);
@@ -219,6 +217,15 @@ impl ThinPoolDev {
                 "Kernel returned unexpected value in thin pool status")))
         }
     }
+
+    pub fn sectors_to_blocks(&self, sectors: Sectors) -> DataBlocks {
+        DataBlocks::new(*sectors / *self.data_block_size)
+    }
+
+    pub fn blocks_to_sectors(&self, blocks: DataBlocks) -> Sectors {
+        Sectors::new(*blocks * *self.data_block_size)
+    }
+
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
