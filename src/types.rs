@@ -9,6 +9,7 @@ use std::error::Error;
 
 use serde;
 use serde_json;
+use nix;
 
 
 //
@@ -97,6 +98,7 @@ impl serde::Deserialize for SectorOffset {
 pub enum FroyoError {
     Io(io::Error),
     Serde(serde_json::error::Error),
+    Nix(nix::Error),
 }
 
 impl fmt::Display for FroyoError {
@@ -104,6 +106,7 @@ impl fmt::Display for FroyoError {
         match *self {
             FroyoError::Io(ref err) => write!(f, "IO error: {}", err),
             FroyoError::Serde(ref err) => write!(f, "Serde error: {}", err),
+            FroyoError::Nix(ref err) => write!(f, "Nix error: {}", err.errno().desc()),
         }
     }
 }
@@ -113,6 +116,7 @@ impl Error for FroyoError {
         match *self {
             FroyoError::Io(ref err) => err.description(),
             FroyoError::Serde(ref err) => Error::description(err),
+            FroyoError::Nix(ref err) => err.errno().desc(),
         }
     }
 
@@ -120,6 +124,7 @@ impl Error for FroyoError {
         match *self {
             FroyoError::Io(ref err) => Some(err),
             FroyoError::Serde(ref err) => Some(err),
+            FroyoError::Nix(_) => None,
         }
     }
 }
@@ -133,5 +138,11 @@ impl From<io::Error> for FroyoError {
 impl From<serde_json::error::Error> for FroyoError {
     fn from(err: serde_json::error::Error) -> FroyoError {
         FroyoError::Serde(err)
+    }
+}
+
+impl From<nix::Error> for FroyoError {
+    fn from(err: nix::Error) -> FroyoError {
+        FroyoError::Nix(err)
     }
 }
