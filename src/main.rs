@@ -84,7 +84,10 @@ fn status(args: &ArgMatches) -> Result<(), FroyoError> {
             let space = try!(f.free_redundant_space());
             let total = f.total_redundant_space();
 
-            println!("Status: {}, {} of {} {} blocks free", status,
+            let percent = (*(total-space) * 100) / *total;
+
+            println!("Status: {}, {}% used ({} of {} {} blocks free)",
+                     status, percent,
                      *space, *total,
                      ByteSize::b(f.data_block_size() as usize).to_string(true));
         },
