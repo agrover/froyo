@@ -98,18 +98,13 @@ impl Froyo {
         let thin_pool_dev = try!(ThinPoolDev::new(&dm, name, &raid_devs));
         let mut thin_devs = Vec::new();
 
-        // Create an initial 1TB thin dev
-        thin_devs.push(try!(ThinDev::create(
+        // Create an initial 1GB thin dev
+        thin_devs.push(try!(ThinDev::new(
             &dm,
             name,
             0,
-            "xfs",
-            // Sectors::new(1024 * 1024 * 1024 * 1024 / SECTOR_SIZE),
             Sectors::new(1024 * 1024 * 1024 / SECTOR_SIZE),
             &thin_pool_dev)));
-
-        try!(thin_devs[0].create_devnode(name));
-        try!(thin_devs[0].create_fs(name));
 
         Ok(Froyo {
             name: name.to_owned(),
@@ -311,7 +306,6 @@ impl Froyo {
                 &dm,
                 &froyo_save.name,
                 std.thin_number,
-                &std.fs,
                 std.size,
                 &thin_pool_dev)));
         }

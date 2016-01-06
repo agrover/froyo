@@ -237,7 +237,6 @@ impl ThinPoolDev {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinDevSave {
     pub thin_number: u32,
-    pub fs: String,
     pub size: Sectors,
 }
 
@@ -245,7 +244,6 @@ pub struct ThinDevSave {
 pub struct ThinDev {
     dev: Device,
     thin_number: u32,
-    fs: String,
     pub size: Sectors,
     dm_name: String,
 }
@@ -256,21 +254,40 @@ pub enum ThinStatus {
 }
 
 impl ThinDev {
+    pub fn new(
+        dm: &DM,
+        name: &str,
+        thin_number: u32,
+        size: Sectors,
+        pool_dev: &ThinPoolDev)
+        -> Result<ThinDev, FroyoError> {
+
+        try!(dm.target_msg(&DevId::Name(&pool_dev.dm_name),
+                           0, &format!("create_thin {}", thin_number)));
+
+        let mut td = try!(ThinDev::create(
+            dm,
+            name,
+            thin_number,
+            size,
+            pool_dev));
+
+        try!(td.create_devnode(name));
+        try!(td.create_fs(name));
+
+        Ok(td)
+    }
+
     pub fn create(
         dm: &DM,
         name: &str,
         thin_number: u32,
-        fs: &str,
         size: Sectors,
         pool_dev: &ThinPoolDev)
-        -> io::Result<ThinDev> {
-        match dm.target_msg(&DevId::Name(&pool_dev.dm_name),
-                            0, &format!("create_thin {}", thin_number)) {
-            Err(x) => dbgp!("create_thin message failed: {}", x.description()),
-            Ok(_) => {},
-        }
+        -> Result<ThinDev, FroyoError> {
 
-        let params = format!("{}:{} {}", pool_dev.dev.major, pool_dev.dev.minor, thin_number);
+        let params = format!("{}:{} {}", pool_dev.dev.major,
+                             pool_dev.dev.minor, thin_number);
         let table = [(0u64, *size, "thin", params)];
 
         let dm_name = format!("froyo-thin-{}-{}", name, thin_number);
@@ -279,7 +296,6 @@ impl ThinDev {
         Ok(ThinDev {
             dev: thin_dev,
             thin_number: thin_number,
-            fs: fs.to_owned(),
             size: size,
             dm_name: dm_name,
         })
@@ -288,7 +304,6 @@ impl ThinDev {
     pub fn to_save(&self) -> ThinDevSave {
         ThinDevSave {
             thin_number: self.thin_number,
-            fs: self.fs.clone(),
             size: self.size,
         }
     }
@@ -315,7 +330,7 @@ impl ThinDev {
         Ok(ThinStatus::Good(Sectors::new(status_vals[0].parse::<u64>().unwrap())))
     }
 
-    pub fn create_devnode(&mut self, name: &str) -> Result<(), FroyoError> {
+    fn create_devnode(&mut self, name: &str) -> Result<(), FroyoError> {
         let mut pathbuf = PathBuf::from("/dev/froyo");
 
         match fs::create_dir(&pathbuf) {
@@ -331,13 +346,18 @@ impl ThinDev {
         pathbuf.push(name);
 
         let old_umask = umask(Mode::empty());
-        try!(mknod(&pathbuf, S_IFBLK, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP, self.dev.into()));
-        umask(old_umask);
+        match mknod(&pathbuf, S_IFBLK, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP, self.dev.into()) {
+            Ok(()) => { umask(old_umask); },
+            Err(e) => {
+                umask(old_umask);
+                return Err(FroyoError::Nix(e))
+            },
+        };
 
         Ok(())
     }
 
-    pub fn create_fs(&mut self, name: &str) -> Result<(), FroyoError> {
+    fn create_fs(&mut self, name: &str) -> Result<(), FroyoError> {
         let dev_name = format!("/dev/froyo/{}", name);
         let output = try!(Command::new("mkfs.xfs")
                           .arg("-f")
