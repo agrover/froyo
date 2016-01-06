@@ -22,7 +22,7 @@ use blockdev::{LinearDev, LinearSegment};
 use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus, RaidMember};
 use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus};
 use thin::{ThinDev, ThinDevSave, ThinStatus};
-use types::{Sectors, SectorOffset, FroyoError};
+use types::{Sectors, SectorOffset, DataBlocks, FroyoError};
 use util::{align_to, clear_dev};
 use consts::*;
 
@@ -429,7 +429,6 @@ impl Froyo {
 
     pub fn status(&self)
                   -> Result<FroyoStatus, FroyoError> {
-
         let mut degraded = 0;
         for (_, rd) in &self.raid_devs {
             let rd = RefCell::borrow(rd);
@@ -462,13 +461,23 @@ impl Froyo {
         Ok(FroyoStatus::Good(working_status))
     }
 
-    pub fn free_redundant_space(&self) -> Result<Sectors, FroyoError> {
-        let raid_space = self.raid_devs.iter()
-            .map(|(_, rd)| rd)
-            .map(|rd| RefCell::borrow(rd).free_sectors())
-            .sum::<Sectors>();
+    // Get how much RAIDed space there is available. This consists of
+    // unused blocks in the thin pool data area, and we also include
+    // unused RAID space, since we could extend the data area if
+    // needed. (The reason we don't is that currently there is no way
+    // to shrink the size of the data area, so keeping it unallocated
+    // if possible may give us more leeway in reshaping smaller.)
+    //
+    pub fn free_redundant_space(&self) -> Result<DataBlocks, FroyoError> {
+        let raid_free_blocks = {
+            let raid_sectors = self.raid_devs.iter()
+                .map(|(_, rd)| rd)
+                .map(|rd| RefCell::borrow(rd).free_sectors())
+                .sum::<Sectors>();
+            self.thin_pool_dev.sectors_to_blocks(raid_sectors)
+        };
 
-        let free_data_blocks = match try!(self.thin_pool_dev.status()) {
+        let thinpool_free_blocks = match try!(self.thin_pool_dev.status()) {
             ThinPoolStatus::Good((_, usage)) => {
                 usage.total_data - usage.used_data
             },
@@ -479,20 +488,19 @@ impl Froyo {
             },
         };
 
-        dbgp!("raid free sectors {} unused TP data blocks {}",
-              *raid_space, free_data_blocks);
-
-        let tp_space = Sectors::new(
-            free_data_blocks * *self.thin_pool_dev.data_block_size);
-
-        Ok(raid_space + tp_space)
+        Ok(raid_free_blocks + thinpool_free_blocks)
     }
 
-    pub fn total_redundant_space(&self) -> Sectors {
-        self.raid_devs.iter()
+    pub fn total_redundant_space(&self) -> DataBlocks {
+        let sectors = self.raid_devs.iter()
             .map(|(_, rd)| rd)
             .map(|rd| RefCell::borrow(rd).length)
-            .sum::<Sectors>()
+            .sum::<Sectors>();
+        self.thin_pool_dev.sectors_to_blocks(sectors)
+    }
+
+    pub fn data_block_size(&self) -> u64 {
+        self.thin_pool_dev.data_block_size()
     }
 }
 

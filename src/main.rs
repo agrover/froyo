@@ -16,6 +16,7 @@ extern crate uuid;
 extern crate time;
 extern crate serde;
 extern crate serde_json;
+extern crate bytesize;
 
 #[macro_use] extern crate custom_derive;
 #[macro_use] extern crate newtype_derive;
@@ -46,6 +47,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{App, Arg, SubCommand, ArgMatches};
 use uuid::Uuid;
+use bytesize::ByteSize;
 
 use types::FroyoError;
 use froyo::{Froyo, FroyoStatus};
@@ -82,8 +84,9 @@ fn status(args: &ArgMatches) -> Result<(), FroyoError> {
             let space = try!(f.free_redundant_space());
             let total = f.total_redundant_space();
 
-            println!("Status: {}, {} of {} sectors free", status,
-                     *space, *total);
+            println!("Status: {}, {} of {} {} blocks free", status,
+                     *space, *total,
+                     ByteSize::b(f.data_block_size() as usize).to_string(true));
         },
         None => println!("Froyodev \"{}\" not found", name),
     }

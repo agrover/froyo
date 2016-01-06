@@ -18,6 +18,7 @@ use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_I
 use types::{Sectors, DataBlocks, FroyoError};
 use raid::{RaidDev, RaidSegment, RaidLinearDev, RaidLinearDevSave};
 use util::{clear_dev, setup_dm_dev};
+use consts::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinPoolDevSave {
@@ -31,7 +32,7 @@ pub struct ThinPoolDevSave {
 pub struct ThinPoolDev {
     dm_name: String,
     dev: Device,
-    pub data_block_size: Sectors,
+    data_block_size: Sectors,
     low_water_blocks: DataBlocks,
     meta_dev: RaidLinearDev,
     data_dev: RaidLinearDev,
@@ -41,8 +42,8 @@ pub struct ThinPoolDev {
 pub struct ThinPoolBlockUsage {
     pub used_meta: u64,
     pub total_meta: u64,
-    pub used_data: u64,
-    pub total_data: u64,
+    pub used_data: DataBlocks,
+    pub total_data: DataBlocks,
 }
 
 pub enum ThinPoolStatus {
@@ -191,8 +192,8 @@ impl ThinPoolDev {
             ThinPoolBlockUsage {
                 used_meta: meta_vals[0].parse::<u64>().unwrap(),
                 total_meta: meta_vals[1].parse::<u64>().unwrap(),
-                used_data: data_vals[0].parse::<u64>().unwrap(),
-                total_data: data_vals[1].parse::<u64>().unwrap(),
+                used_data: DataBlocks::new(data_vals[0].parse::<u64>().unwrap()),
+                total_data: DataBlocks::new(data_vals[1].parse::<u64>().unwrap()),
             }
         };
 
@@ -216,6 +217,11 @@ impl ThinPoolDev {
                 io::ErrorKind::InvalidData,
                 "Kernel returned unexpected value in thin pool status")))
         }
+    }
+
+    // return size of a data block in bytes
+    pub fn data_block_size(&self) -> u64 {
+        *self.data_block_size * SECTOR_SIZE
     }
 
     pub fn sectors_to_blocks(&self, sectors: Sectors) -> DataBlocks {

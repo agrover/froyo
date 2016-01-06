@@ -3,6 +3,7 @@ name = "froyo"
 version = "0.1.0"
 dependencies = [
  "byteorder 0.3.13 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bytesize 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 1.5.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "crc 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "custom_derive 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -49,6 +50,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "byteorder"
 version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "bytesize"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "num 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "clap"
