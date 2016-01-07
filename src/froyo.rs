@@ -512,7 +512,7 @@ impl Froyo {
 
     fn get_raid_segments(sectors: Sectors,
                          raid_devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
-                         -> Option<Vec<Rc<RefCell<RaidSegment>>>> {
+                         -> Option<Vec<RaidSegment>> {
         let mut needed = sectors;
         let mut segs = Vec::new();
         for (_, rd) in raid_devs {

@@ -2,8 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::io;
 use std::error::Error;
 use std::process::Command;
@@ -61,8 +59,8 @@ pub enum ThinPoolWorkingStatus {
 impl ThinPoolDev {
     pub fn new(dm: &DM,
                name: &str,
-               meta_segs: Vec<Rc<RefCell<RaidSegment>>>,
-               data_segs: Vec<Rc<RefCell<RaidSegment>>>)
+               meta_segs: Vec<RaidSegment>,
+               data_segs: Vec<RaidSegment>)
                -> io::Result<ThinPoolDev> {
         // meta
         let meta_name = format!("thin-meta-{}", name);
@@ -205,14 +203,14 @@ impl ThinPoolDev {
         Sectors::new(*blocks * *self.data_block_size)
     }
 
-    pub fn extend_data_dev(&mut self, segs: Vec<Rc<RefCell<RaidSegment>>>)
+    pub fn extend_data_dev(&mut self, segs: Vec<RaidSegment>)
                            -> FroyoResult<()> {
         try!(self.data_dev.extend(segs));
         try!(self.dm_reload());
         Ok(())
     }
 
-    pub fn extend_meta_dev(&mut self, segs: Vec<Rc<RefCell<RaidSegment>>>)
+    pub fn extend_meta_dev(&mut self, segs: Vec<RaidSegment>)
                            -> FroyoResult<()> {
         try!(self.meta_dev.extend(segs));
         try!(self.dm_reload());

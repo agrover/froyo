@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::io;
@@ -33,7 +34,7 @@ pub struct RaidDev {
     pub region_sectors: Sectors,
     pub length: Sectors,
     members: Vec<RaidMember>,
-    used: Vec<Rc<RefCell<RaidSegment>>>,
+    used: BTreeMap<SectorOffset, Sectors>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,7 +132,7 @@ impl RaidDev {
             region_sectors: region,
             length: target_length,
             members: devs,
-            used: Vec::new()
+            used: BTreeMap::new()
         })
     }
 
@@ -152,9 +153,8 @@ impl RaidDev {
 
     fn used_areas(&self)-> Vec<(SectorOffset, Sectors)> {
         self.used.iter()
-            .map(|rs| {
-                let rs = RefCell::borrow(rs);
-                (rs.start, rs.length)
+            .map(|(key, val)| {
+                (*key, *val)
             })
             .collect()
     }
@@ -166,7 +166,6 @@ impl RaidDev {
         // Insert an entry to mark the end of the raiddev so the fold works
         // correctly
         used_vec.push((SectorOffset::new(*self.length), Sectors::new(0)));
-
 
         let mut free_vec = Vec::new();
         used_vec.iter()
@@ -282,13 +281,13 @@ impl fmt::Debug for RaidSegment {
 
 impl RaidSegment {
     pub fn new(start: SectorOffset, length: Sectors, parent: &Rc<RefCell<RaidDev>>)
-           -> Rc<RefCell<RaidSegment>> {
-        let rs = Rc::new(RefCell::new(RaidSegment {
+           -> RaidSegment {
+        let rs = RaidSegment {
             start: start,
             length: length,
             parent: parent.clone(),
-        }));
-        RefCell::borrow_mut(parent).used.push(rs.clone());
+        };
+        RefCell::borrow_mut(parent).used.insert(start, length);
 
         // RaidSegments are forever. If not, then don't forget to
         // update parent RaidDev's used vec
@@ -305,6 +304,12 @@ impl RaidSegment {
     }
 }
 
+impl Drop for RaidSegment {
+    fn drop(&mut self) {
+        self.parent.borrow_mut().used.remove(&self.start);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaidLinearDevSave {
     pub id: String,
@@ -316,16 +321,15 @@ pub struct RaidLinearDev {
     id: String,
     pub dm_name: String,
     pub dev: Device,
-    pub segments: Vec<Rc<RefCell<RaidSegment>>>,
+    pub segments: Vec<RaidSegment>,
 }
 
 impl RaidLinearDev {
-    pub fn dm_table(segments: &Vec<Rc<RefCell<RaidSegment>>>)
+    pub fn dm_table(segments: &Vec<RaidSegment>)
                     -> Vec<(u64, u64, String, String)> {
         let mut table = Vec::new();
         let mut offset = SectorOffset::new(0);
         for seg in segments {
-            let seg = RefCell::borrow(seg);
             let line = (*offset, *seg.length, "linear".to_owned(),
                         format!("{}:{} {}",
                                 RefCell::borrow(&seg.parent).dev.major,
@@ -339,7 +343,7 @@ impl RaidLinearDev {
     }
 
     pub fn create(dm: &DM, name: &str, id: &str,
-                  segments: Vec<Rc<RefCell<RaidSegment>>>)
+                  segments: Vec<RaidSegment>)
               -> io::Result<RaidLinearDev> {
 
         let table = Self::dm_table(&segments);
@@ -358,22 +362,22 @@ impl RaidLinearDev {
         RaidLinearDevSave {
             id: self.id.clone(),
             segments: self.segments.iter()
-                .map(|x| RefCell::borrow(x).to_save())
+                .map(|x| x.to_save())
                 .collect()
         }
     }
 
     pub fn length(&self) -> Sectors {
-        self.segments.iter().map(|x| RefCell::borrow(x).length).sum()
+        self.segments.iter().map(|x| x.length).sum()
     }
 
-    pub fn extend(&mut self, segs: Vec<Rc<RefCell<RaidSegment>>>)
+    pub fn extend(&mut self, segs: Vec<RaidSegment>)
         -> FroyoResult<()> {
 
         // last existing and first new may be contiguous
         let coalesced_new_first = {
-            let mut old_last = self.segments.last_mut().unwrap().borrow_mut();
-            let new_first = segs.first().unwrap().borrow();
+            let mut old_last = self.segments.last_mut().unwrap();
+            let new_first = segs.first().unwrap();
             let mut coal = false;
             if old_last.parent.borrow().id == new_first.parent.borrow().id
                 && (old_last.start + SectorOffset::new(*old_last.length)
