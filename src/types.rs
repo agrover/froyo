@@ -11,6 +11,7 @@ use serde;
 use serde_json;
 use nix;
 
+pub type FroyoResult<T> = Result<T, FroyoError>;
 
 //
 // Use distinct 'newtype' types for sectors and sector offsets for type safety.

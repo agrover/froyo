@@ -22,7 +22,7 @@ use blockdev::{LinearDev, LinearSegment};
 use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus, RaidMember};
 use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus};
 use thin::{ThinDev, ThinDevSave, ThinStatus};
-use types::{Sectors, SectorOffset, DataBlocks, FroyoError};
+use types::{Sectors, SectorOffset, DataBlocks, FroyoError, FroyoResult};
 use util::{align_to, clear_dev};
 use consts::*;
 
@@ -62,7 +62,8 @@ pub enum FroyoWorkingStatus {
 }
 
 impl Froyo {
-    pub fn create<T>(name: &str, id: &str, paths: &[T], force: bool) -> Result<Froyo, FroyoError>
+    pub fn create<T>(name: &str, id: &str, paths: &[T], force: bool)
+                     -> FroyoResult<Froyo>
         where T: Borrow<Path>
     {
         let mut block_devs = BTreeMap::new();
@@ -146,15 +147,15 @@ impl Froyo {
         }
     }
 
-    pub fn to_metadata(&self) -> Result<String, FroyoError> {
+    pub fn to_metadata(&self) -> FroyoResult<String> {
         Ok(try!(serde_json::to_string(&self.to_save())))
     }
 
-    pub fn to_metadata_pretty(&self) -> Result<String, FroyoError> {
+    pub fn to_metadata_pretty(&self) -> FroyoResult<String> {
         Ok(try!(serde_json::to_string_pretty(&self.to_save())))
     }
 
-    pub fn find_all() -> Result<Vec<Froyo>, FroyoError> {
+    pub fn find_all() -> FroyoResult<Vec<Froyo>> {
         // We could have BlockDevs for multiple Froyodevs.
         // Group them by Froyo uuid.
         let mut froyo_devs = BTreeMap::new();
@@ -191,7 +192,7 @@ impl Froyo {
         Ok(froyos)
     }
 
-    pub fn find(name: &str) -> Result<Option<Froyo>, FroyoError> {
+    pub fn find(name: &str) -> FroyoResult<Option<Froyo>> {
         let froyos = try!(Froyo::find_all());
         for f in froyos {
             if name == f.name {
@@ -203,7 +204,7 @@ impl Froyo {
     }
 
     fn from_save(froyo_save: FroyoSave, froyo_id: String, blockdevs: Vec<BlockDev>)
-                 -> Result<Froyo, FroyoError> {
+                 -> FroyoResult<Froyo> {
         let mut bd_map = blockdevs.into_iter()
             .map(|x| (x.id.clone(), x))
             .collect::<BTreeMap<_, _>>();
@@ -339,7 +340,7 @@ impl Froyo {
         dm: &DM,
         name: &str,
         block_devs: &BTreeMap<String, Rc<RefCell<BlockDev>>>)
-        -> Result<Option<RaidDev>, FroyoError> {
+        -> FroyoResult<Option<RaidDev>> {
 
         // TODO: Make sure name has only chars we can use in a DM name
 
@@ -422,7 +423,7 @@ impl Froyo {
         Ok(Some(raid))
     }
 
-    pub fn save_state(&self) -> Result<(), FroyoError> {
+    pub fn save_state(&self) -> FroyoResult<()> {
         let metadata = try!(self.to_metadata());
         let current_time = time::now().to_timespec();
 
@@ -434,7 +435,7 @@ impl Froyo {
     }
 
     pub fn status(&self)
-                  -> Result<FroyoStatus, FroyoError> {
+                  -> FroyoResult<FroyoStatus> {
         let mut degraded = 0;
         for (_, rd) in &self.raid_devs {
             let rd = RefCell::borrow(rd);
@@ -474,7 +475,7 @@ impl Froyo {
     // to shrink the size of the data area, so keeping it unallocated
     // if possible may give us more leeway in reshaping smaller.)
     //
-    pub fn free_redundant_space(&self) -> Result<DataBlocks, FroyoError> {
+    pub fn free_redundant_space(&self) -> FroyoResult<DataBlocks> {
         let raid_free_blocks = {
             let raid_sectors = self.raid_devs.iter()
                 .map(|(_, rd)| rd)
@@ -530,7 +531,7 @@ impl Froyo {
         }
     }
 
-    pub fn extend_thinpool_data_dev(&mut self, length: Sectors) -> Result<(), FroyoError> {
+    pub fn extend_thinpool_data_dev(&mut self, length: Sectors) -> FroyoResult<()> {
         let new_segs = try!(Self::get_raid_segments(
             length, &self.raid_devs).ok_or(
             io::Error::new(io::ErrorKind::InvalidInput,
@@ -541,7 +542,7 @@ impl Froyo {
         Ok(())
     }
 
-    pub fn extend_thinpool_meta_dev(&mut self, length: Sectors) -> Result<(), FroyoError> {
+    pub fn extend_thinpool_meta_dev(&mut self, length: Sectors) -> FroyoResult<()> {
         let new_segs = try!(Self::get_raid_segments(
             length, &self.raid_devs).ok_or(
             io::Error::new(io::ErrorKind::InvalidInput,

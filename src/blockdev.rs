@@ -18,7 +18,7 @@ use crc::crc32;
 use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
 
-use types::{Sectors, SectorOffset, FroyoError};
+use types::{Sectors, SectorOffset, FroyoResult};
 use consts::*;
 use util::{setup_dm_dev, blkdev_size};
 
@@ -189,7 +189,7 @@ impl BlockDev {
         }
     }
 
-    pub fn find_all() -> Result<Vec<BlockDev>, FroyoError> {
+    pub fn find_all() -> FroyoResult<Vec<BlockDev>> {
         Ok(try!(read_dir("/dev"))
            .into_iter()
            .filter_map(|dir_e| if dir_e.is_ok()

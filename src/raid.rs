@@ -11,7 +11,7 @@ use std::fmt;
 
 use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
 
-use types::{Sectors, SectorOffset, FroyoError};
+use types::{Sectors, SectorOffset, FroyoError, FroyoResult};
 use blockdev::{LinearDev, LinearDevSave};
 use consts::*;
 use util::setup_dm_dev;
@@ -206,7 +206,7 @@ impl RaidDev {
         (size - needed, segs)
     }
 
-    pub fn status(&self) -> Result<(RaidStatus, RaidAction), FroyoError> {
+    pub fn status(&self) -> FroyoResult<(RaidStatus, RaidAction)> {
         let dm = try!(DM::new());
 
         let (_, mut status) = try!(dm.table_status(&DevId::Name(&self.dm_name), DmFlags::empty()));
@@ -368,7 +368,7 @@ impl RaidLinearDev {
     }
 
     pub fn extend(&mut self, segs: Vec<Rc<RefCell<RaidSegment>>>)
-        -> Result<(), FroyoError> {
+        -> FroyoResult<()> {
 
         // last existing and first new may be contiguous
         let coalesced_new_first = {

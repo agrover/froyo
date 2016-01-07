@@ -14,7 +14,7 @@ use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
 use uuid::Uuid;
 use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
 
-use types::{Sectors, DataBlocks, FroyoError};
+use types::{Sectors, DataBlocks, FroyoError, FroyoResult};
 use raid::{RaidSegment, RaidLinearDev, RaidLinearDevSave};
 use util::{clear_dev, setup_dm_dev};
 use consts::*;
@@ -135,7 +135,7 @@ impl ThinPoolDev {
         }
     }
 
-    pub fn status(&self) -> Result<ThinPoolStatus, FroyoError> {
+    pub fn status(&self) -> FroyoResult<ThinPoolStatus> {
         let dm = try!(DM::new());
 
         let (_, mut status) = try!(
@@ -206,20 +206,20 @@ impl ThinPoolDev {
     }
 
     pub fn extend_data_dev(&mut self, segs: Vec<Rc<RefCell<RaidSegment>>>)
-                           -> Result<(), FroyoError> {
+                           -> FroyoResult<()> {
         try!(self.data_dev.extend(segs));
         try!(self.dm_reload());
         Ok(())
     }
 
     pub fn extend_meta_dev(&mut self, segs: Vec<Rc<RefCell<RaidSegment>>>)
-                           -> Result<(), FroyoError> {
+                           -> FroyoResult<()> {
         try!(self.meta_dev.extend(segs));
         try!(self.dm_reload());
         Ok(())
     }
 
-    fn dm_reload(&self) -> Result<(), FroyoError> {
+    fn dm_reload(&self) -> FroyoResult<()> {
         let dm = try!(DM::new());
         let id = &DevId::Name(&self.dm_name);
 
@@ -258,7 +258,7 @@ impl ThinDev {
         thin_number: u32,
         size: Sectors,
         pool_dev: &ThinPoolDev)
-        -> Result<ThinDev, FroyoError> {
+        -> FroyoResult<ThinDev> {
 
         try!(dm.target_msg(&DevId::Name(&pool_dev.dm_name),
                            0, &format!("create_thin {}", thin_number)));
@@ -282,7 +282,7 @@ impl ThinDev {
         thin_number: u32,
         size: Sectors,
         pool_dev: &ThinPoolDev)
-        -> Result<ThinDev, FroyoError> {
+        -> FroyoResult<ThinDev> {
 
         let params = format!("{}:{} {}", pool_dev.dev.major,
                              pool_dev.dev.minor, thin_number);
@@ -306,7 +306,7 @@ impl ThinDev {
         }
     }
 
-    pub fn status(&self) -> Result<ThinStatus, FroyoError> {
+    pub fn status(&self) -> FroyoResult<ThinStatus> {
         let dm = try!(DM::new());
 
         let (_, mut status) = try!(
@@ -328,7 +328,7 @@ impl ThinDev {
         Ok(ThinStatus::Good(Sectors::new(status_vals[0].parse::<u64>().unwrap())))
     }
 
-    fn create_devnode(&mut self, name: &str) -> Result<(), FroyoError> {
+    fn create_devnode(&mut self, name: &str) -> FroyoResult<()> {
         let mut pathbuf = PathBuf::from("/dev/froyo");
 
         match fs::create_dir(&pathbuf) {
@@ -355,7 +355,7 @@ impl ThinDev {
         Ok(())
     }
 
-    fn create_fs(&mut self, name: &str) -> Result<(), FroyoError> {
+    fn create_fs(&mut self, name: &str) -> FroyoResult<()> {
         let dev_name = format!("/dev/froyo/{}", name);
         let output = try!(Command::new("mkfs.xfs")
                           .arg("-f")

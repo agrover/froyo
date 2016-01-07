@@ -49,7 +49,7 @@ use clap::{App, Arg, SubCommand, ArgMatches};
 use uuid::Uuid;
 use bytesize::ByteSize;
 
-use types::FroyoError;
+use types::{DataBlocks, FroyoResult};
 use froyo::{Froyo, FroyoStatus};
 
 
@@ -61,7 +61,7 @@ use froyo::{Froyo, FroyoStatus};
 // We use these to make a ThinPoolDev.
 // From that, we allocate a ThinDev.
 
-fn list(_args: &ArgMatches) -> Result<(), FroyoError> {
+fn list(_args: &ArgMatches) -> FroyoResult<()> {
     let froyos = try!(Froyo::find_all());
     for f in &froyos {
         println!("{}", f.name);
@@ -70,7 +70,7 @@ fn list(_args: &ArgMatches) -> Result<(), FroyoError> {
     Ok(())
 }
 
-fn status(args: &ArgMatches) -> Result<(), FroyoError> {
+fn status(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     match try!(Froyo::find(&name)) {
         Some(f) => {
@@ -96,17 +96,17 @@ fn status(args: &ArgMatches) -> Result<(), FroyoError> {
     Ok(())
 }
 
-fn add(_args: &ArgMatches) -> Result<(), FroyoError> {
+fn add(_args: &ArgMatches) -> FroyoResult<()> {
     println!("hello from add()");
     Ok(())
 }
 
-fn remove(_args: &ArgMatches) -> Result<(), FroyoError> {
+fn remove(_args: &ArgMatches) -> FroyoResult<()> {
     println!("hello from remove()");
     Ok(())
 }
 
-fn create(args: &ArgMatches) -> Result<(), FroyoError> {
+fn create(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     let dev_paths: Vec<_> = args.values_of("devices").unwrap().into_iter()
         .map(|dev| {
@@ -127,7 +127,7 @@ fn create(args: &ArgMatches) -> Result<(), FroyoError> {
     Ok(())
 }
 
-fn dump_meta(args: &ArgMatches) -> Result<(), FroyoError> {
+fn dump_meta(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     match try!(Froyo::find(&name)) {
         Some(f) =>
