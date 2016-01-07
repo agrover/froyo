@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::io;
@@ -11,12 +10,12 @@ use std::process::Command;
 use std::fs;
 use std::path::PathBuf;
 
-use devicemapper::{DM, Device, DmFlags, DevId};
+use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
 use uuid::Uuid;
 use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
 
 use types::{Sectors, DataBlocks, FroyoError};
-use raid::{RaidDev, RaidSegment, RaidLinearDev, RaidLinearDevSave};
+use raid::{RaidSegment, RaidLinearDev, RaidLinearDevSave};
 use util::{clear_dev, setup_dm_dev};
 use consts::*;
 
@@ -34,6 +33,7 @@ pub struct ThinPoolDev {
     dev: Device,
     data_block_size: Sectors,
     low_water_blocks: DataBlocks,
+    params: String,
     meta_dev: RaidLinearDev,
     data_dev: RaidLinearDev,
 }
@@ -59,46 +59,18 @@ pub enum ThinPoolWorkingStatus {
 }
 
 impl ThinPoolDev {
-    fn get_raid_segments(sectors: Sectors, devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
-                         -> Option<Vec<Rc<RefCell<RaidSegment>>>> {
-        let mut needed = sectors;
-        let mut segs = Vec::new();
-        for (_, rd) in devs {
-            if needed == Sectors::new(0) {
-                break
-            }
-            let (gotten, r_segs) = RefCell::borrow(rd).get_some_space(sectors);
-            segs.extend(r_segs.iter()
-                        .map(|&(start, len)| RaidSegment::new(start, len, rd)));
-            needed = needed - gotten;
-        }
-
-        match *needed {
-            0 => Some(segs),
-            _ => None,
-        }
-    }
-
-    pub fn new(dm: &DM, name: &str, devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
+    pub fn new(dm: &DM,
+               name: &str,
+               meta_segs: Vec<Rc<RefCell<RaidSegment>>>,
+               data_segs: Vec<Rc<RefCell<RaidSegment>>>)
                -> io::Result<ThinPoolDev> {
-
-        let meta_size = Sectors::new(8192);
-        let data_size = Sectors::new(2 * 2 * 1024 * 1024);
-
-        let meta_raid_segments = try!(ThinPoolDev::get_raid_segments(meta_size, devs).ok_or(
-            io::Error::new(io::ErrorKind::InvalidInput,
-                           "no space for thinpool meta")));
-        let data_raid_segments = try!(ThinPoolDev::get_raid_segments(data_size, devs).ok_or(
-            io::Error::new(io::ErrorKind::InvalidInput,
-                           "no space for thinpool data")));
-
         // meta
         let meta_name = format!("thin-meta-{}", name);
         let meta_raid_dev = try!(RaidLinearDev::create(
             dm,
             &meta_name,
             &Uuid::new_v4().to_simple_string(),
-            meta_raid_segments));
+            meta_segs));
 
         try!(clear_dev(&meta_raid_dev.dev));
 
@@ -108,7 +80,7 @@ impl ThinPoolDev {
             dm,
             &data_name,
             &Uuid::new_v4().to_simple_string(),
-            data_raid_segments));
+            data_segs));
 
         let data_block_size = Sectors::new(2048); // 1MiB
         let low_water_blocks = DataBlocks::new(512); // 512MiB
@@ -138,7 +110,7 @@ impl ThinPoolDev {
                              data_raid_dev.dev.minor,
                              *data_block_size,
                              *low_water_blocks);
-        let table = [(0u64, *data_raid_dev.length(), "thin-pool", params)];
+        let table = [(0u64, *data_raid_dev.length(), "thin-pool", &*params)];
 
         let dm_name = format!("froyo-thin-pool-{}", name);
         let pool_dev = try!(setup_dm_dev(dm, &dm_name, &table));
@@ -148,6 +120,7 @@ impl ThinPoolDev {
             dev: pool_dev,
             data_block_size: data_block_size,
             low_water_blocks: low_water_blocks,
+            params: params.clone(),
             meta_dev: meta_raid_dev,
             data_dev: data_raid_dev,
         })
@@ -232,6 +205,31 @@ impl ThinPoolDev {
         Sectors::new(*blocks * *self.data_block_size)
     }
 
+    pub fn extend_data_dev(&mut self, segs: Vec<Rc<RefCell<RaidSegment>>>)
+                           -> Result<(), FroyoError> {
+        try!(self.data_dev.extend(segs));
+        try!(self.dm_reload());
+        Ok(())
+    }
+
+    pub fn extend_meta_dev(&mut self, segs: Vec<Rc<RefCell<RaidSegment>>>)
+                           -> Result<(), FroyoError> {
+        try!(self.meta_dev.extend(segs));
+        try!(self.dm_reload());
+        Ok(())
+    }
+
+    fn dm_reload(&self) -> Result<(), FroyoError> {
+        let dm = try!(DM::new());
+        let id = &DevId::Name(&self.dm_name);
+
+        let table = [(0u64, *self.data_dev.length(), "thin-pool", &*self.params)];
+
+        try!(dm.table_load(id, &table));
+        try!(dm.device_suspend(id, DM_SUSPEND));
+        try!(dm.device_suspend(id, DmFlags::empty()));
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

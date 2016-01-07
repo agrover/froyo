@@ -9,7 +9,7 @@ use std::io::ErrorKind;
 use std::cmp::min;
 use std::fmt;
 
-use devicemapper::{DM, Device, DmFlags, DevId};
+use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
 
 use types::{Sectors, SectorOffset, FroyoError};
 use blockdev::{LinearDev, LinearDevSave};
@@ -186,8 +186,8 @@ impl RaidDev {
             .sum()
     }
 
-    // Find some sector ranges that could be allocated. If more sectors are needed than
-    // our capacity, return partial results.
+    // Find some sector ranges that could be allocated. If more
+    // sectors are needed than our capacity, return partial results.
     pub fn get_some_space(&self, size: Sectors) -> (Sectors, Vec<(SectorOffset, Sectors)>) {
         let mut segs = Vec::new();
         let mut needed = size;
@@ -290,6 +290,9 @@ impl RaidSegment {
         }));
         RefCell::borrow_mut(parent).used.push(rs.clone());
 
+        // RaidSegments are forever. If not, then don't forget to
+        // update parent RaidDev's used vec
+
         rs
     }
 
@@ -311,7 +314,7 @@ pub struct RaidLinearDevSave {
 #[derive(Debug, Clone)]
 pub struct RaidLinearDev {
     id: String,
-    dm_name: String,
+    pub dm_name: String,
     pub dev: Device,
     pub segments: Vec<Rc<RefCell<RaidSegment>>>,
 }
@@ -362,5 +365,40 @@ impl RaidLinearDev {
 
     pub fn length(&self) -> Sectors {
         self.segments.iter().map(|x| RefCell::borrow(x).length).sum()
+    }
+
+    pub fn extend(&mut self, segs: Vec<Rc<RefCell<RaidSegment>>>)
+        -> Result<(), FroyoError> {
+
+        // last existing and first new may be contiguous
+        let coalesced_new_first = {
+            let mut old_last = self.segments.last_mut().unwrap().borrow_mut();
+            let new_first = segs.first().unwrap().borrow();
+            let mut coal = false;
+            if old_last.parent.borrow().id == new_first.parent.borrow().id
+                && (old_last.start + SectorOffset::new(*old_last.length)
+                    == new_first.start) {
+                    old_last.length = old_last.length + new_first.length;
+                    coal = true;
+                }
+            coal
+        };
+
+        if coalesced_new_first {
+            self.segments.extend(segs.into_iter().skip(1));
+        } else {
+            self.segments.extend(segs);
+        }
+
+        let table = RaidLinearDev::dm_table(&self.segments);
+
+        let dm = try!(DM::new());
+        let id = &DevId::Name(&self.dm_name);
+
+        try!(dm.table_load(id, &table));
+        try!(dm.device_suspend(id, DM_SUSPEND));
+        try!(dm.device_suspend(id, DmFlags::empty()));
+
+        Ok(())
     }
 }

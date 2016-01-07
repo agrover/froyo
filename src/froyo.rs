@@ -95,9 +95,21 @@ impl Froyo {
             }
         }
 
-        let thin_pool_dev = try!(ThinPoolDev::new(&dm, name, &raid_devs));
-        let mut thin_devs = Vec::new();
+        let meta_size = Sectors::new(8192);
+        let data_size = Sectors::new(2 * 2 * 1024 * 1024);
 
+        let meta_raid_segments = try!(Self::get_raid_segments(
+            meta_size, &raid_devs).ok_or(
+            io::Error::new(io::ErrorKind::InvalidInput,
+                           "no space for thinpool meta")));
+        let data_raid_segments = try!(Self::get_raid_segments(
+            data_size, &raid_devs).ok_or(
+            io::Error::new(io::ErrorKind::InvalidInput,
+                           "no space for thinpool data")));
+        let thin_pool_dev = try!(ThinPoolDev::new(
+            &dm, name, meta_raid_segments, data_raid_segments));
+
+        let mut thin_devs = Vec::new();
         // Create an initial 1GB thin dev
         thin_devs.push(try!(ThinDev::new(
             &dm,
@@ -468,7 +480,7 @@ impl Froyo {
                 .map(|(_, rd)| rd)
                 .map(|rd| RefCell::borrow(rd).free_sectors())
                 .sum::<Sectors>();
-            self.thin_pool_dev.sectors_to_blocks(raid_sectors)
+            self.sectors_to_blocks(raid_sectors)
         };
 
         let thinpool_free_blocks = match try!(self.thin_pool_dev.status()) {
@@ -490,11 +502,62 @@ impl Froyo {
             .map(|(_, rd)| rd)
             .map(|rd| RefCell::borrow(rd).length)
             .sum::<Sectors>();
-        self.thin_pool_dev.sectors_to_blocks(sectors)
+        self.sectors_to_blocks(sectors)
     }
 
     pub fn data_block_size(&self) -> u64 {
         self.thin_pool_dev.data_block_size()
+    }
+
+    fn get_raid_segments(sectors: Sectors,
+                         raid_devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
+                         -> Option<Vec<Rc<RefCell<RaidSegment>>>> {
+        let mut needed = sectors;
+        let mut segs = Vec::new();
+        for (_, rd) in raid_devs {
+            if needed == Sectors::new(0) {
+                break
+            }
+            let (gotten, r_segs) = RefCell::borrow(rd).get_some_space(needed);
+            segs.extend(r_segs.iter()
+                        .map(|&(start, len)| RaidSegment::new(start, len, rd)));
+            needed = needed - gotten;
+        }
+
+        match *needed {
+            0 => Some(segs),
+            _ => None,
+        }
+    }
+
+    pub fn extend_thinpool_data_dev(&mut self, length: Sectors) -> Result<(), FroyoError> {
+        let new_segs = try!(Self::get_raid_segments(
+            length, &self.raid_devs).ok_or(
+            io::Error::new(io::ErrorKind::InvalidInput,
+                           "no space for extending thinpool data")));
+
+        try!(self.thin_pool_dev.extend_data_dev(new_segs));
+
+        Ok(())
+    }
+
+    pub fn extend_thinpool_meta_dev(&mut self, length: Sectors) -> Result<(), FroyoError> {
+        let new_segs = try!(Self::get_raid_segments(
+            length, &self.raid_devs).ok_or(
+            io::Error::new(io::ErrorKind::InvalidInput,
+                           "no space for extending thinpool meta")));
+
+        try!(self.thin_pool_dev.extend_meta_dev(new_segs));
+
+        Ok(())
+    }
+
+    pub fn blocks_to_sectors(&self, blocks: DataBlocks) -> Sectors {
+        self.thin_pool_dev.blocks_to_sectors(blocks)
+    }
+
+    pub fn sectors_to_blocks(&self, sectors: Sectors) -> DataBlocks {
+        self.thin_pool_dev.sectors_to_blocks(sectors)
     }
 }
 
