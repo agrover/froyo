@@ -268,9 +268,9 @@ pub struct RaidSegmentSave {
 
 #[derive(Clone)]
 pub struct RaidSegment {
-    start: SectorOffset,
-    length: Sectors,
-    parent: Rc<RefCell<RaidDev>>,
+    pub start: SectorOffset,
+    pub length: Sectors,
+    pub parent: Rc<RefCell<RaidDev>>,
 }
 
 impl fmt::Debug for RaidSegment {
@@ -311,30 +311,41 @@ pub struct RaidLinearDevSave {
 #[derive(Debug, Clone)]
 pub struct RaidLinearDev {
     id: String,
+    dm_name: String,
     pub dev: Device,
-    segments: Vec<Rc<RefCell<RaidSegment>>>,
+    pub segments: Vec<Rc<RefCell<RaidSegment>>>,
 }
 
 impl RaidLinearDev {
-    pub fn create(dm: &DM, name: &str, id: &str, segments: Vec<Rc<RefCell<RaidSegment>>>)
-              -> io::Result<RaidLinearDev> {
-
+    pub fn dm_table(segments: &Vec<Rc<RefCell<RaidSegment>>>)
+                    -> Vec<(u64, u64, String, String)> {
         let mut table = Vec::new();
         let mut offset = SectorOffset::new(0);
-        for seg in &segments {
+        for seg in segments {
             let seg = RefCell::borrow(seg);
-            let line = (*offset, *seg.length, "linear",
-                        format!("{}:{} {}", RefCell::borrow(&seg.parent).dev.major,
-                                RefCell::borrow(&seg.parent).dev.minor, *seg.start));
+            let line = (*offset, *seg.length, "linear".to_owned(),
+                        format!("{}:{} {}",
+                                RefCell::borrow(&seg.parent).dev.major,
+                                RefCell::borrow(&seg.parent).dev.minor,
+                                *seg.start));
             table.push(line);
             offset = offset + SectorOffset::new(*seg.length);
         }
 
+        table
+    }
+
+    pub fn create(dm: &DM, name: &str, id: &str,
+                  segments: Vec<Rc<RefCell<RaidSegment>>>)
+              -> io::Result<RaidLinearDev> {
+
+        let table = Self::dm_table(&segments);
         let dm_name = format!("froyo-raid-linear-{}", name);
         let linear_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         Ok(RaidLinearDev {
             id: id.to_owned(),
+            dm_name: dm_name,
             dev: linear_dev,
             segments: segments,
         })
