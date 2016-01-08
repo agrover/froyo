@@ -323,7 +323,8 @@ impl ThinDev {
         }
         let status_vals = status_line.split(' ').collect::<Vec<_>>();
 
-        Ok(ThinStatus::Good(Sectors::new(status_vals[0].parse::<u64>().unwrap())))
+        Ok(ThinStatus::Good(Sectors::new(
+            status_vals[0].parse::<u64>().unwrap())))
     }
 
     fn create_devnode(&mut self, name: &str) -> FroyoResult<()> {
@@ -342,13 +343,14 @@ impl ThinDev {
         pathbuf.push(name);
 
         let old_umask = umask(Mode::empty());
-        match mknod(&pathbuf, S_IFBLK, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP, self.dev.into()) {
-            Ok(()) => { umask(old_umask); },
-            Err(e) => {
-                umask(old_umask);
-                return Err(FroyoError::Nix(e))
-            },
-        };
+        let res = mknod(&pathbuf,
+                    S_IFBLK,
+                    S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP,
+                    self.dev.into());
+        umask(old_umask);
+        if let Err(e) = res {
+            return Err(FroyoError::Nix(e))
+        }
 
         Ok(())
     }
