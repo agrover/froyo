@@ -553,6 +553,10 @@ impl Froyo {
         Ok(())
     }
 
+    pub fn extend_thin_dev(&mut self, length: Sectors) -> FroyoResult<()> {
+        self.thin_devs[0].extend(length)
+    }
+
     pub fn blocks_to_sectors(&self, blocks: DataBlocks) -> Sectors {
         self.thin_pool_dev.blocks_to_sectors(blocks)
     }

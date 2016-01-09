@@ -242,6 +242,7 @@ pub struct ThinDev {
     thin_number: u32,
     pub size: Sectors,
     dm_name: String,
+    params: String,
 }
 
 pub enum ThinStatus {
@@ -284,7 +285,7 @@ impl ThinDev {
 
         let params = format!("{}:{} {}", pool_dev.dev.major,
                              pool_dev.dev.minor, thin_number);
-        let table = [(0u64, *size, "thin", params)];
+        let table = [(0u64, *size, "thin", &*params)];
 
         let dm_name = format!("froyo-thin-{}-{}", name, thin_number);
         let thin_dev = try!(setup_dm_dev(dm, &dm_name, &table));
@@ -294,7 +295,26 @@ impl ThinDev {
             thin_number: thin_number,
             size: size,
             dm_name: dm_name,
+            params: params.clone(),
         })
+    }
+
+    pub fn extend(&mut self, sectors: Sectors) -> FroyoResult<()> {
+
+        self.size = self.size + sectors;
+
+        let dm = try!(DM::new());
+        let id = &DevId::Name(&self.dm_name);
+
+        let table = [(0u64, *self.size, "thin", &*self.params)];
+
+        try!(dm.table_load(id, &table));
+        try!(dm.device_suspend(id, DM_SUSPEND));
+        try!(dm.device_suspend(id, DmFlags::empty()));
+
+        // TODO filesystem still needs to be told to use extra space
+
+        Ok(())
     }
 
     pub fn to_save(&self) -> ThinDevSave {
