@@ -212,13 +212,16 @@ fn main() {
                          .index(2)
                          )
                     )
-        .subcommand(SubCommand::with_name("dump_meta")
-                    .about("Output the JSON metadata for a froyodev")
-                    .arg(Arg::with_name("froyodevname")
-                         .help("Name of the froyodev")
-                         .required(true)
-                         .index(1)
-                         )
+        .subcommand(SubCommand::with_name("dev")
+                    .about("Developer/debug commands")
+                    .subcommand(SubCommand::with_name("dump_meta")
+                                .about("Output the JSON metadata for a froyodev")
+                                .arg(Arg::with_name("froyodevname")
+                                     .help("Name of the froyodev")
+                                     .required(true)
+                                     .index(1)
+                                     )
+                                )
                     )
         .get_matches();
 
@@ -233,7 +236,10 @@ fn main() {
         ("add", Some(matches)) => add(matches),
         ("remove", Some(matches)) => remove(matches),
         ("create", Some(matches)) => create(matches),
-        ("dump_meta", Some(matches)) => dump_meta(matches),
+        ("dev", Some(matches)) => match matches.subcommand() {
+            ("dump_meta", Some(matches)) => dump_meta(matches),
+            _ => unreachable!(),
+        },
         ("", None) => {
             println!("No command given, try \"help\"");
             Ok(())
