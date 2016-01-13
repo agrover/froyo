@@ -146,7 +146,6 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
     let froyos = try!(Froyo::find_all());
     let tree = try!(dbus_api::get_tree(&c, &froyos));
 
-    tree.set_registered(&c, true).unwrap();
     for _ in tree.run(&c, c.iter(1000)) {
         println!("hi");
     }

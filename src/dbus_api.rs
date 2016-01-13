@@ -40,6 +40,8 @@ pub fn get_tree<'a>(c: &Connection, froyos: &[Froyo])
                      )
         });
 
+    tree.set_registered(&c, true).unwrap();
+
     Ok(tree)
 }
 
