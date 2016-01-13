@@ -40,6 +40,7 @@ mod blockdev;
 mod raid;
 mod thin;
 mod util;
+mod dbus_api;
 
 use std::io::Write;
 use std::error::Error;
@@ -49,8 +50,7 @@ use std::path::{Path, PathBuf};
 use clap::{App, Arg, SubCommand, ArgMatches};
 use uuid::Uuid;
 use bytesize::ByteSize;
-use dbus::{Connection, BusType, NameFlag};
-use dbus::tree::Factory;
+use dbus::{Connection, BusType};
 
 use types::{DataBlocks, FroyoResult};
 use froyo::{Froyo, FroyoStatus};
@@ -142,29 +142,14 @@ fn dump_meta(args: &ArgMatches) -> FroyoResult<()> {
 }
 
 fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
-    let froyos = try!(Froyo::find_all());
-
     let c = Connection::get_private(BusType::Session).unwrap();
-    c.register_name("org.kernel.Froyo1", NameFlag::ReplaceExisting as u32).unwrap();
-
-    let f = Factory::new_fn();
-    let tree = froyos
-        .iter()
-        .fold(f.tree(), |tree, froyo| {
-            tree.add(f.object_path(format!("/org/kernel/froyo/{}", froyo.name))
-                     .introspectable()
-                     .object_manager()
-                     .add(f.interface("org.kernel.FroyoService1")
-                          .add_m(f.method("Hello", |m,_,_| {
-                              let s = format!("Hello {}!", m.sender().unwrap());
-                              Ok(vec!(m.method_return().append(s)))
-                          }).out_arg(("reply", "s"))) // One output argument, no input arguments
-                          )
-                     )
-        });
+    let froyos = try!(Froyo::find_all());
+    let tree = try!(dbus_api::get_tree(&c, &froyos));
 
     tree.set_registered(&c, true).unwrap();
-    for _ in tree.run(&c, c.iter(1000)) {}
+    for _ in tree.run(&c, c.iter(1000)) {
+        println!("hi");
+    }
 
     Ok(())
 }
