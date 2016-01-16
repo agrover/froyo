@@ -350,13 +350,9 @@ impl ThinDev {
     fn create_devnode(&mut self, name: &str) -> FroyoResult<()> {
         let mut pathbuf = PathBuf::from("/dev/froyo");
 
-        match fs::create_dir(&pathbuf) {
-            Ok(()) => {},
-            Err(e) => {
-                match e.kind() {
-                    io::ErrorKind::AlreadyExists => {},
-                    _ => return Err(FroyoError::Io(e)),
-                }
+        if let Err(e) = fs::create_dir(&pathbuf) {
+            if e.kind() != io::ErrorKind::AlreadyExists {
+                return Err(FroyoError::Io(e))
             }
         }
 

@@ -272,9 +272,8 @@ fn main() {
     };
 
     if let Err(r) = r {
-        match writeln!(&mut ::std::io::stderr(), "{}", r.description()) {
-            Ok(_) => {},
-            Err(x) => panic!("Unable to write to stderr: {}", x),
+        if let Err(e) = writeln!(&mut ::std::io::stderr(), "{}", r.description()) {
+            panic!("Unable to write to stderr: {}", e)
         }
         exit(1);
     }
