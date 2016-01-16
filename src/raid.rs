@@ -231,7 +231,7 @@ impl RaidDev {
                 'A' => {},
                 'a' => {},
                 'D' => bad += 1,
-                x @ _ => return Err(FroyoError::Io(io::Error::new(
+                x => return Err(FroyoError::Io(io::Error::new(
                     ErrorKind::InvalidData,
                     format!("Kernel returned unknown raid health char '{}'", x)))),
             }
@@ -325,7 +325,7 @@ pub struct RaidLinearDev {
 }
 
 impl RaidLinearDev {
-    pub fn dm_table(segments: &Vec<RaidSegment>)
+    pub fn dm_table(segments: &[RaidSegment])
                     -> Vec<(u64, u64, String, String)> {
         let mut table = Vec::new();
         let mut offset = SectorOffset::new(0);

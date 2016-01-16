@@ -25,7 +25,7 @@ pub fn blkdev_size(file: &File) -> io::Result<u64> {
     let mut val: u64 = 0;
 
     match unsafe { ioctl::read_into(file.as_raw_fd(), op, &mut val) } {
-        Err(_) => return Err((io::Error::last_os_error())),
+        Err(_) => Err((io::Error::last_os_error())),
         Ok(_) => Ok(val),
     }
 }

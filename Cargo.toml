@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Andy Grover <agrover@redhat.com>"]
 
 [dependencies]
+clippy = "*"
 devicemapper = "0.3.0"
 clap = "1"
 nix = "=0.3.9"

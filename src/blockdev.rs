@@ -71,7 +71,7 @@ impl BlockDev {
         }
 
         let crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
-        if crc != LittleEndian::read_u32(&mut buf[..4]) {
+        if crc != LittleEndian::read_u32(&buf[..4]) {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("{} Froyo header CRC failed", path.display())));
@@ -109,7 +109,8 @@ impl BlockDev {
         })
     }
 
-    pub fn initialize(froyodev_id: &str, path: &Path, force: bool) -> io::Result<BlockDev> {
+    pub fn initialize(froyodev_id: &str, path: &Path, force: bool)
+                      -> io::Result<BlockDev> {
         let pstat = match stat::stat(path) {
             Err(_) => return Err(io::Error::new(
                 ErrorKind::NotFound,

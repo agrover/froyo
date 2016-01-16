@@ -87,13 +87,9 @@ impl Froyo {
         let dm = try!(DM::new());
 
         let mut raid_devs = BTreeMap::new();
-        loop {
-            if let Some(rd) = try!(
-                Froyo::create_redundant_zone(&dm, name, &block_devs)) {
-                raid_devs.insert(rd.id.clone(), Rc::new(RefCell::new(rd)));
-            } else {
-                break
-            }
+        while let Some(rd) = try!(
+            Froyo::create_redundant_zone(&dm, name, &block_devs)) {
+            raid_devs.insert(rd.id.clone(), Rc::new(RefCell::new(rd)));
         }
 
         let meta_size = Sectors::new(8192);
@@ -228,7 +224,7 @@ impl Froyo {
                        block_devs.len(), froyo_save.name),
             num @ 1...FROYO_REDUNDANCY => dbgp!("Missing {} of {} drives from {}, can continue",
                                                 num, froyo_save.block_devs.len(), froyo_save.name),
-            num @ _ => return Err(FroyoError::Io(io::Error::new(
+            num => return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("{} of {} devices missing from {}",
                         num, froyo_save.block_devs.len(), froyo_save.name)))),
@@ -237,7 +233,7 @@ impl Froyo {
         let dm = try!(DM::new());
 
         let mut raid_devs = BTreeMap::new();
-        for (id, srd) in froyo_save.raid_devs.iter() {
+        for (id, srd) in &froyo_save.raid_devs {
             let mut linear_devs = Vec::new();
             for (m_num, sld) in srd.members.iter().enumerate() {
                 match block_devs.get(&sld.parent) {
@@ -371,9 +367,10 @@ impl Froyo {
                 region_sectors = Sectors::new(*region_sectors * 2);
             }
 
-            let partial_region = match common_free_sectors % region_sectors == Sectors::new(0) {
-                true => Sectors::new(0),
-                false => Sectors::new(1),
+            let partial_region = if common_free_sectors % region_sectors == Sectors::new(0) {
+                Sectors::new(0)
+            } else {
+                Sectors::new(1)
             };
 
             (common_free_sectors / region_sectors + partial_region, region_sectors)

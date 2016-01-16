@@ -178,13 +178,13 @@ impl ThinPoolDev {
         }
 
         match status_vals[4] {
-            "rw" => return Ok(ThinPoolStatus::Good(
+            "rw" => Ok(ThinPoolStatus::Good(
                 (ThinPoolWorkingStatus::Good, usage))),
-            "ro" => return Ok(ThinPoolStatus::Good(
+            "ro" => Ok(ThinPoolStatus::Good(
                 (ThinPoolWorkingStatus::ReadOnly, usage))),
-            "out_of_data_space" => return Ok(ThinPoolStatus::Good(
+            "out_of_data_space" => Ok(ThinPoolStatus::Good(
                 (ThinPoolWorkingStatus::OutOfSpace, usage))),
-            _ => return Err(FroyoError::Io(io::Error::new(
+            _ => Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Kernel returned unexpected value in thin pool status")))
         }

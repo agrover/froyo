@@ -5,6 +5,7 @@
 #![feature(iter_arith, zero_one, custom_derive,
            custom_attribute, plugin, clone_from_slice, const_fn)]
 #![plugin(serde_macros)]
+#![plugin(clippy)]
 
 extern crate devicemapper;
 #[macro_use]
