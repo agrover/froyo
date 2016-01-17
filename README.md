@@ -12,5 +12,4 @@ Drobo + Free + You = Froyo!
 
 ## Development notes
 
-Currently requires a modified dbus-rs, see
-https://github.com/agrover/dbus-rs/commits/make-stuff-pub
+Currently requires using Rust nightly compiler.
