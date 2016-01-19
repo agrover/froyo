@@ -96,11 +96,11 @@ impl Froyo {
         let data_size = Sectors::new(2 * 2 * 1024 * 1024);
 
         let meta_raid_segments = try!(Self::get_raid_segments(
-            meta_size, &raid_devs).ok_or(
+            meta_size, &raid_devs).ok_or_else(||
             io::Error::new(io::ErrorKind::InvalidInput,
                            "no space for thinpool meta")));
         let data_raid_segments = try!(Self::get_raid_segments(
-            data_size, &raid_devs).ok_or(
+            data_size, &raid_devs).ok_or_else(||
             io::Error::new(io::ErrorKind::InvalidInput,
                            "no space for thinpool data")));
         let thin_pool_dev = try!(ThinPoolDev::new(
@@ -271,7 +271,7 @@ impl Froyo {
             let meta_name = format!("thin-meta-{}", froyo_save.name);
             let mut raid_segments = Vec::new();
             for seg in &tpd.meta_dev.segments {
-                let parent = try!(raid_devs.get(&seg.parent).ok_or(
+                let parent = try!(raid_devs.get(&seg.parent).ok_or_else(||
                     io::Error::new(io::ErrorKind::InvalidInput,
                                    "Could not find meta's parent")));
                 raid_segments.push(
@@ -287,7 +287,7 @@ impl Froyo {
             let data_name = format!("thin-data-{}", froyo_save.name);
             let mut raid_segments = Vec::new();
             for seg in &tpd.data_dev.segments {
-                let parent = try!(raid_devs.get(&seg.parent).ok_or(
+                let parent = try!(raid_devs.get(&seg.parent).ok_or_else(||
                     io::Error::new(io::ErrorKind::InvalidInput,
                                    "Could not find data's parent")));
                 raid_segments.push(
@@ -530,7 +530,7 @@ impl Froyo {
 
     pub fn extend_thinpool_data_dev(&mut self, length: Sectors) -> FroyoResult<()> {
         let new_segs = try!(Self::get_raid_segments(
-            length, &self.raid_devs).ok_or(
+            length, &self.raid_devs).ok_or_else(||
             io::Error::new(io::ErrorKind::InvalidInput,
                            "no space for extending thinpool data")));
 
@@ -541,7 +541,7 @@ impl Froyo {
 
     pub fn extend_thinpool_meta_dev(&mut self, length: Sectors) -> FroyoResult<()> {
         let new_segs = try!(Self::get_raid_segments(
-            length, &self.raid_devs).ok_or(
+            length, &self.raid_devs).ok_or_else(||
             io::Error::new(io::ErrorKind::InvalidInput,
                            "no space for extending thinpool meta")));
 

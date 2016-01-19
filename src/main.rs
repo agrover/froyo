@@ -3,7 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #![feature(iter_arith, zero_one, custom_derive,
-           custom_attribute, plugin, clone_from_slice, const_fn)]
+           custom_attribute, plugin, const_fn)]
 #![plugin(serde_macros)]
 #![plugin(clippy)]
 
