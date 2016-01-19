@@ -343,7 +343,7 @@ impl Froyo {
         // get common data area size, allowing for Froyo data at start and end
         let mut bd_areas: Vec<_> = block_devs.iter()
             .filter_map(|(_, bd)| {
-                match RefCell::borrow(bd).largest_free_area() {
+                match RefCell::borrow(bd).largest_avail_area() {
                     Some(x) => Some((bd.clone(), x)),
                     None => None,
                 }
@@ -356,24 +356,24 @@ impl Froyo {
             return Ok(None)
         }
 
-        let common_free_sectors = bd_areas.iter()
+        let common_avail_sectors = bd_areas.iter()
             .map(|&(_, (_, len))| len)
             .min()
             .unwrap();
 
         let (region_count, region_sectors) = {
             let mut region_sectors = DEFAULT_REGION_SECTORS;
-            while *common_free_sectors / *region_sectors > MAX_REGIONS {
+            while *common_avail_sectors / *region_sectors > MAX_REGIONS {
                 region_sectors = Sectors::new(*region_sectors * 2);
             }
 
-            let partial_region = if common_free_sectors % region_sectors == Sectors::new(0) {
+            let partial_region = if common_avail_sectors % region_sectors == Sectors::new(0) {
                 Sectors::new(0)
             } else {
                 Sectors::new(1)
             };
 
-            (common_free_sectors / region_sectors + partial_region, region_sectors)
+            (common_avail_sectors / region_sectors + partial_region, region_sectors)
         };
 
         // each region needs 1 bit in the write intent bitmap
@@ -381,7 +381,7 @@ impl Froyo {
                                          .next_power_of_two()
                                          / SECTOR_SIZE);
         // data size must be multiple of stripe size
-        let data_sectors = (common_free_sectors - mdata_sectors) & Sectors::new(!(*STRIPE_SECTORS-1));
+        let data_sectors = (common_avail_sectors - mdata_sectors) & Sectors::new(!(*STRIPE_SECTORS-1));
 
         let raid_uuid = Uuid::new_v4().to_simple_string();
 
@@ -472,16 +472,16 @@ impl Froyo {
     // to shrink the size of the data area, so keeping it unallocated
     // if possible may give us more leeway in reshaping smaller.)
     //
-    pub fn free_redundant_space(&self) -> FroyoResult<DataBlocks> {
-        let raid_free_blocks = {
+    pub fn avail_redundant_space(&self) -> FroyoResult<DataBlocks> {
+        let raid_avail_blocks = {
             let raid_sectors = self.raid_devs.iter()
                 .map(|(_, rd)| rd)
-                .map(|rd| RefCell::borrow(rd).free_sectors())
+                .map(|rd| RefCell::borrow(rd).avail_sectors())
                 .sum::<Sectors>();
             self.sectors_to_blocks(raid_sectors)
         };
 
-        let thinpool_free_blocks = match try!(self.thin_pool_dev.status()) {
+        let thinpool_avail_blocks = match try!(self.thin_pool_dev.status()) {
             ThinPoolStatus::Good((_, usage)) => {
                 usage.total_data - usage.used_data
             },
@@ -492,7 +492,7 @@ impl Froyo {
             },
         };
 
-        Ok(raid_free_blocks + thinpool_free_blocks)
+        Ok(raid_avail_blocks + thinpool_avail_blocks)
     }
 
     pub fn total_redundant_space(&self) -> DataBlocks {

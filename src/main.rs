@@ -85,7 +85,7 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
                 FroyoStatus::ThinFailed => "Thin device failed",
             };
 
-            let space = try!(f.free_redundant_space());
+            let space = try!(f.avail_redundant_space());
             let total = f.total_redundant_space();
 
             let percent = (*(total-space) * 100) / *total;

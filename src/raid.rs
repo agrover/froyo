@@ -159,7 +159,7 @@ impl RaidDev {
             .collect()
     }
 
-    fn free_areas(&self) -> Vec<(SectorOffset, Sectors)> {
+    fn avail_areas(&self) -> Vec<(SectorOffset, Sectors)> {
         let mut used_vec = self.used_areas();
 
         used_vec.sort();
@@ -167,20 +167,20 @@ impl RaidDev {
         // correctly
         used_vec.push((SectorOffset::new(*self.length), Sectors::new(0)));
 
-        let mut free_vec = Vec::new();
+        let mut avail_vec = Vec::new();
         used_vec.iter()
             .fold(SectorOffset::new(0), |prev_end, &(start, len)| {
                 if prev_end < start {
-                    free_vec.push((prev_end, Sectors::new(*start-*prev_end)));
+                    avail_vec.push((prev_end, Sectors::new(*start-*prev_end)));
                 }
                 start + SectorOffset::new(*len)
             });
 
-        free_vec
+        avail_vec
     }
 
-    pub fn free_sectors(&self) -> Sectors {
-        self.free_areas().into_iter()
+    pub fn avail_sectors(&self) -> Sectors {
+        self.avail_areas().into_iter()
             .map(|(_, len)| len)
             .sum()
     }
@@ -191,7 +191,7 @@ impl RaidDev {
         let mut segs = Vec::new();
         let mut needed = size;
 
-        for (start, len) in self.free_areas() {
+        for (start, len) in self.avail_areas() {
             if needed == Sectors::new(0) {
                 break
             }

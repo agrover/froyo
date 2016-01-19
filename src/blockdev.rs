@@ -220,7 +220,7 @@ impl BlockDev {
         used
     }
 
-    fn free_areas(&self) -> Vec<(SectorOffset, Sectors)> {
+    fn avail_areas(&self) -> Vec<(SectorOffset, Sectors)> {
         let mut free = Vec::new();
 
         // Insert an entry to mark the end so the fold works correctly
@@ -238,8 +238,8 @@ impl BlockDev {
         free
     }
 
-    pub fn largest_free_area(&self) -> Option<(SectorOffset, Sectors)> {
-        self.free_areas().into_iter()
+    pub fn largest_avail_area(&self) -> Option<(SectorOffset, Sectors)> {
+        self.avail_areas().into_iter()
             .max_by_key(|&(_, len)| len)
     }
 
