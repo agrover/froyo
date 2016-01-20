@@ -43,8 +43,8 @@ The friendly name of the Froyodev.
 The remaining and total 512-byte sectors that the
 Froyodev currently has available for user data. Both of these numbers
 may change, as more or less data is stored on the Froyodev, and also
-increase or decrease as the dimensions of the Froyodev increase or
-decrease.
+increase or decrease if block devices are added or removed from the
+Froyodev.
 
 ##### RO Property: `Status`
 
