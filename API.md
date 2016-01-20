@@ -75,7 +75,7 @@ some way:
 |-----|----------------
 |0-7  |Froyodev is missing disks. This `u8` indicates how many more devices are needed for full operation.
 |8    |Froyodev is non-redundant. This will likely be set if the above field is nonzero, but may not be if the Froyodev had 2-disk or greater redundancy to start.
-|9    | The Froyodev has enough free space to re-establish redundancy without additional disks. See the `Reshape` command.
+|9    | Cannot reshape. The Froyodev is non-redundant and does not have enough free space to re-establish redundancy without additional resources. See the `Reshape` command.
 |10   |The Froyodev's write speed has been throttled to avoid running out of space.
 |11-31|Reserved or unenumerated issue that does not prevent operation.
 
@@ -88,24 +88,26 @@ each block device's status:
 
 | Value | Description
 |-------|----------------
-|0      | Good
-|1      | Bad
-|2      | Not present
+|0      | Good, in use
+|1      | Good, not in use
+|2      | Bad
+|3      | Not present
 
 ##### Method: `AddBlockDevice`
 
 In Args: `BlockDevicePath`(string), `Force`(bool)
 
 Adds the given block device to the Froyodev. The `Force` parameter's
-behavior is similar to the `Create` method.
+behavior is similar to its use in the `Create` method.
 
 ##### Method: `RemoveBlockDevice`
 
 In Args: `BlockDevicePath`(string)
 
-Removes the given block device from the Froyodev. This will cause the
-Froyodev to enter either non-redundant or a failed mode, depending on
-if the Froyodev was previously already non-redundant or not.
+Removes the given block device from the Froyodev. If the block device
+was in-use, this will cause the Froyodev to enter either non-redundant
+or a failed mode, depending on whether the Froyodev was previously
+already non-redundant or not.
 
 ##### Method: `Reshape`
 
@@ -113,7 +115,8 @@ No In or Out arguments
 
 The Froyodev will reconfigure itself in the background to operate
 redundantly with the disks it currently has available. This will
-likely fail unless the can-reshape bit in FroyoRunningStatus indicates
-it is possible. Reshape operation will begin immediately and will
-impact performance of other accesses to the Froyodev.
+likely fail if bit 9 (`Cannot Reshape`) in the `Status` property's
+`FroyoRunningStatus` field is set. Reshape operation will begin
+immediately and will impact performance of other accesses to the
+Froyodev.
 
