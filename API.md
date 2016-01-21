@@ -4,8 +4,8 @@ Froyo has a DBus API. The Froyo command-line program uses it, and
 other clients can also use it, both to get information and to
 configure new or existing Froyo devices.
 
-The Froyo service registers the name `org.freedesktop.Froyo1` on the system's
-DBus System bus.
+The Froyo service registers the name `org.freedesktop.Froyo1` on the
+system's DBus System bus.
 
 ### Root Object path
 
@@ -15,7 +15,7 @@ DBus System bus.
 
 In Args: `Name`(string), `Blockdevs`(array(string)), `Force`(bool)
 
-Out Args: None
+Out Args: `FroyodevPath`(string)
 
 Create a Froyodev from the given blockdevs. Froyo will refuse to
 create the device if it thinks data is present on any of the block
@@ -25,16 +25,26 @@ Clients should not set `Force` to `true` without getting a secondary
 confirmation of intent that Froyo can overwrite the contents of the
 block device.
 
+Returns the object path of the newly created Froyodev.
+
 ### Froyodev paths
 
 `/org/freedesktop/froyo/devs/<uuid>`
 
 Each Froyodev present on the system will have an object here based on
-its uuid.
+its uuid. These can be enumerated using the DBus `ObjectManager` API.
+Property changes will cause `PropertiesChanged` signals except where
+noted.
 
-##### RW Property: `Name`
+##### RO Property: `Name`
 
 The friendly name of the Froyodev.
+
+##### Method: `SetName`
+
+In Args: `NewName`(string)
+
+Change the friendly name of the Froyo device.
 
 ##### RO Property: `Capacity`
 
@@ -45,6 +55,11 @@ Froyodev currently has available for user data. Both of these numbers
 may change, as more or less data is stored on the Froyodev, and also
 increase or decrease if block devices are added or removed from the
 Froyodev.
+
+Due to frequently changing, this property does not emit
+`PropertyChanged` signals. Clients looking to track almost-full
+conditions should track signals from the Status property and look for
+write-throttling, as shown by bit 10 of `FroyoRunningStatus`.
 
 ##### RO Property: `Status`
 
@@ -57,7 +72,7 @@ issue with a particular area:
 
 | Bit | Description
 |-----|----------------
-|0-7  |Blockdevice-level failure. Too few valid block devices that make up the Froyodev are present. This `u8` indicates how many more devices are needed to start the Froyodev in degraded condition.
+|0-7  |Block device-level failure. Too few valid block devices that make up the Froyodev are present. This `u8` indicates how many more devices are needed to start the Froyodev in non-redundant condition.
 |8    |Raid Failure. The redundancy layer has failed.
 |9    |ThinPool failure - Meta. Something is wrong with the metadata device or its data.
 |10   |ThinPool failure - Data. Something is wrong with the thinpool data device.
@@ -73,11 +88,12 @@ some way:
 
 | Bit | Description
 |-----|----------------
-|0-7  |Froyodev is missing disks. This `u8` indicates how many more devices are needed for full operation.
-|8    |Froyodev is non-redundant. This will likely be set if the above field is nonzero, but may not be if the Froyodev had 2-disk or greater redundancy to start.
-|9    | Cannot reshape. The Froyodev is non-redundant and does not have enough free space to re-establish redundancy without additional resources. See the `Reshape` command.
-|10   |The Froyodev's write speed has been throttled to avoid running out of space.
-|11-31|Reserved or unenumerated issue that does not prevent operation.
+|0-7  |Missing Block devices. This `u8` indicates how many more devices are needed for full operation.
+|8    |Non-redundant. This will likely be set if the above field is nonzero, but may not be if the Froyodev had a redundancy of 2 or greater to start.
+|9    |Cannot reshape. The Froyodev is non-redundant and does not have enough free space to re-establish redundancy without additional resources. See the `Reshape` command.
+|10   |Throttled. The Froyodev's write speed has been throttled to avoid running out of space.
+|11   |Reshaping. The Froyodev is currently reshaping. Read and write performance may be affected.
+|12-31|Reserved or unenumerated issue that does not prevent operation.
 
 ##### RO Property: `BlockDevices`
 
@@ -114,9 +130,11 @@ already non-redundant or not.
 No In or Out arguments
 
 The Froyodev will reconfigure itself in the background to operate
-redundantly with the disks it currently has available. This will
-likely fail if bit 9 (`Cannot Reshape`) in the `Status` property's
-`FroyoRunningStatus` field is set. Reshape operation will begin
-immediately and will impact performance of other accesses to the
-Froyodev.
+redundantly with the block devices it currently has available. This
+will likely fail if bit 9 (`Cannot Reshape`) in the `Status`
+property's `FroyoRunningStatus` field is set. Reshape operation will
+begin immediately and will impact the performance of other I/O
+operations to the Froyodev.
 
+After reshape, all bad or not present block devices are no longer
+tracked as part of the Froyodev.
