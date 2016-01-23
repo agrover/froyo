@@ -6,24 +6,41 @@ use std::borrow::Borrow;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use dbus::{Connection, NameFlag};
-use dbus::tree::Factory;
-use dbus::tree::Tree;
-use dbus::tree::{MethodFn, MethodErr};
+use dbus::tree::{Factory, Tree, Property, MethodFn, MethodErr, EmitsChangedSignal};
 use dbus::MessageItem;
 
 use froyo::Froyo;
 use types::FroyoResult;
 
-pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo>>>>>)
+#[derive(Debug, Clone)]
+pub struct DbusContext<'a> {
+    name_prop: Arc<Property<MethodFn<'a>>>,
+    pub remaining_prop: Arc<Property<MethodFn<'a>>>,
+    pub total_prop: Arc<Property<MethodFn<'a>>>,
+    pub status_prop: Arc<Property<MethodFn<'a>>>,
+    pub running_status_prop: Arc<Property<MethodFn<'a>>>,
+}
+
+impl<'a> DbusContext<'a> {
+    pub fn update_one(prop: &Arc<Property<MethodFn<'a>>>, m: MessageItem)
+                      -> FroyoResult<()> {
+        prop.set_value(m);
+        // TODO: result is signals we need to be sending for PropertyChanged???
+        Ok(())
+    }
+}
+
+pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo<'a>>>>>>)
                        -> FroyoResult<Tree<MethodFn<'a>>> {
     c.register_name("org.freedesktop.Froyo1", NameFlag::ReplaceExisting as u32).unwrap();
 
     let f = Factory::new_fn();
 
     let froyos_closed_over = froyos.clone();
-    let froyos = RefCell::borrow(&froyos);
+    let mut froyos = RefCell::borrow_mut(&froyos);
 
     let create_method = f.method("Create", move |m,_,_| {
         let mut items = m.get_items();
@@ -75,13 +92,15 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
              ));
 
     let tree = froyos
-        .iter()
+        .iter_mut()
         .fold(tree, |tree, froyo| {
 
             let mut iface = f.interface("org.freedesktop.FroyoDevice1");
-            let p = iface.add_p_ref(f.property("Name", RefCell::borrow(&*froyo).name.to_owned()));
+            let name_p = iface.add_p_ref(f.property(
+                "Name", RefCell::borrow(&*froyo).name.to_owned()));
+            let p_closed_over = name_p.clone();
             let froyo_closed_over = froyo.clone();
-            let iface = iface.add_m(
+            let mut iface = iface.add_m(
                 f.method("SetName", move |m,_,_| {
                     let mut items = m.get_items();
                     if items.len() < 1 {
@@ -98,19 +117,43 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                     try!(froyo.save_state()
                          .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
 
-                    try!(p.set_value(name.into())
+                    try!(p_closed_over.set_value(name.into())
                          .map_err(|_| MethodErr::invalid_arg(&"name")));
                     Ok(vec![m.method_return()])
                 })
                     .in_arg(("new_name", "s")));
 
-            let path = format!("/org/freedesktop/froyo/{}", RefCell::borrow(&*froyo).id);
+            let rem_p = iface.add_p_ref(f.property("RemainingSectors", 0u64)
+                                        .emits_changed(EmitsChangedSignal::False));
+            let tot_p = iface.add_p_ref(f.property("TotalSectors", 0u64)
+                                        .emits_changed(EmitsChangedSignal::False));
+            let status_p = iface.add_p_ref(f.property("Status", 0u32));
+            let running_status_p = iface.add_p_ref(f.property("RunningStatus", 0u32));
+
+            let mut froyo = RefCell::borrow_mut(froyo);
+            let path = format!("/org/freedesktop/froyo/{}", froyo.id);
+            froyo.dbus_context = Some(DbusContext {
+                name_prop: name_p,
+                remaining_prop: rem_p,
+                total_prop: tot_p,
+                status_prop: status_p,
+                running_status_prop: running_status_p,
+            });
+
             tree.add(f.object_path(path)
                      .introspectable()
                      .add(iface))
         });
 
-    println!("tree {:#?}", tree);
+    // TODO: BlockDevices property
+    // TODO: AddBlockDevice method
+    // TODO: RemoveBlockDevice method
+    // TODO: Reshape method
+
+    for froyo in &*froyos {
+        try!(RefCell::borrow(&froyo).update_dbus());
+    }
+
     tree.set_registered(&c, true).unwrap();
 
     Ok(tree)

@@ -23,6 +23,7 @@ use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus, RaidMem
 use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus};
 use thin::{ThinDev, ThinDevSave, ThinStatus};
 use types::{Sectors, SectorOffset, DataBlocks, FroyoError, FroyoResult};
+use dbus_api::DbusContext;
 use util::{align_to, clear_dev};
 use consts::*;
 
@@ -38,7 +39,7 @@ struct FroyoSave {
 }
 
 #[derive(Debug, Clone)]
-pub struct Froyo {
+pub struct Froyo<'a> {
     pub id: String,
     pub name: String,
     block_devs: BTreeMap<String, Rc<RefCell<BlockDev>>>,
@@ -46,24 +47,25 @@ pub struct Froyo {
     thin_pool_dev: ThinPoolDev,
     thin_devs: Vec<ThinDev>,
     throttled: bool,
+    pub dbus_context: Option<DbusContext<'a>>,
 }
 
 pub enum FroyoStatus {
-    Good(FroyoWorkingStatus),
+    Good(FroyoRunningStatus),
     RaidFailed,
     ThinPoolFailed,
     ThinFailed,
 }
 
-pub enum FroyoWorkingStatus {
+pub enum FroyoRunningStatus {
     Good,
-    Degraded(usize),
+    Degraded(u8),
     Throttled,
 }
 
-impl Froyo {
+impl<'a> Froyo<'a> {
     pub fn create<T>(name: &str, paths: &[T], force: bool)
-                     -> FroyoResult<Froyo>
+                     -> FroyoResult<Froyo<'a>>
         where T: Borrow<Path>
     {
         let id = Uuid::new_v4().to_simple_string();
@@ -124,6 +126,7 @@ impl Froyo {
             thin_pool_dev: thin_pool_dev,
             thin_devs: thin_devs,
             throttled: false,
+            dbus_context: None,
         })
     }
 
@@ -152,7 +155,7 @@ impl Froyo {
         Ok(try!(serde_json::to_string_pretty(&self.to_save())))
     }
 
-    pub fn find_all() -> FroyoResult<Vec<Froyo>> {
+    pub fn find_all() -> FroyoResult<Vec<Froyo<'a>>> {
         // We could have BlockDevs for multiple Froyodevs.
         // Group them by Froyo uuid.
         let mut froyo_devs = BTreeMap::new();
@@ -201,7 +204,7 @@ impl Froyo {
     }
 
     fn from_save(froyo_save: FroyoSave, froyo_id: String, blockdevs: Vec<BlockDev>)
-                 -> FroyoResult<Froyo> {
+                 -> FroyoResult<Froyo<'a>> {
         let mut bd_map = blockdevs.into_iter()
             .map(|x| (x.id.clone(), x))
             .collect::<BTreeMap<_, _>>();
@@ -328,6 +331,7 @@ impl Froyo {
             thin_pool_dev: thin_pool_dev,
             thin_devs: thin_devs,
             throttled: false,
+            dbus_context: None,
         })
     }
 
@@ -455,11 +459,11 @@ impl Froyo {
 
         let working_status = {
             if degraded != 0 {
-                FroyoWorkingStatus::Degraded(degraded)
+                FroyoRunningStatus::Degraded(degraded)
             } else if self.throttled {
-                FroyoWorkingStatus::Throttled
+                FroyoRunningStatus::Throttled
             } else {
-                FroyoWorkingStatus::Good
+                FroyoRunningStatus::Good
             }
         };
 
@@ -473,18 +477,17 @@ impl Froyo {
     // to shrink the size of the data area, so keeping it unallocated
     // if possible may give us more leeway in reshaping smaller.)
     //
-    pub fn avail_redundant_space(&self) -> FroyoResult<DataBlocks> {
-        let raid_avail_blocks = {
-            let raid_sectors = self.raid_devs.iter()
+    pub fn avail_redundant_space(&self) -> FroyoResult<Sectors> {
+        let raid_avail = {
+            self.raid_devs.iter()
                 .map(|(_, rd)| rd)
                 .map(|rd| RefCell::borrow(rd).avail_sectors())
-                .sum::<Sectors>();
-            self.sectors_to_blocks(raid_sectors)
+                .sum::<Sectors>()
         };
 
-        let thinpool_avail_blocks = match try!(self.thin_pool_dev.status()) {
+        let thinpool_avail = match try!(self.thin_pool_dev.status()) {
             ThinPoolStatus::Good((_, usage)) => {
-                usage.total_data - usage.used_data
+                self.blocks_to_sectors(usage.total_data - usage.used_data)
             },
             ThinPoolStatus::Fail => {
                 return Err(FroyoError::Io(io::Error::new(
@@ -493,15 +496,14 @@ impl Froyo {
             },
         };
 
-        Ok(raid_avail_blocks + thinpool_avail_blocks)
+        Ok(raid_avail + thinpool_avail)
     }
 
-    pub fn total_redundant_space(&self) -> DataBlocks {
-        let sectors = self.raid_devs.iter()
+    pub fn total_redundant_space(&self) -> Sectors {
+        self.raid_devs.iter()
             .map(|(_, rd)| rd)
             .map(|rd| RefCell::borrow(rd).length)
-            .sum::<Sectors>();
-        self.sectors_to_blocks(sectors)
+            .sum::<Sectors>()
     }
 
     pub fn data_block_size(&self) -> u64 {
@@ -561,6 +563,29 @@ impl Froyo {
 
     pub fn sectors_to_blocks(&self, sectors: Sectors) -> DataBlocks {
         self.thin_pool_dev.sectors_to_blocks(sectors)
+    }
+
+    pub fn update_dbus(&self) -> FroyoResult<()> {
+        if let Some(ref dc) = self.dbus_context {
+            let remaining = try!(self.avail_redundant_space());
+            try!(DbusContext::update_one(&dc.remaining_prop, (*remaining).into()));
+            let total = self.total_redundant_space();
+            try!(DbusContext::update_one(&dc.total_prop, (*total).into()));
+
+            let (status, r_status): (u32,u32) = match try!(self.status()) {
+                FroyoStatus::RaidFailed => (0x100, 0),
+                FroyoStatus::ThinPoolFailed => (0x200, 0),
+                FroyoStatus::ThinFailed => (0x400, 0),
+                FroyoStatus::Good(rs) => match rs {
+                    FroyoRunningStatus::Degraded(x) => (0, x as u32),
+                    FroyoRunningStatus::Throttled => (0, 0x800),
+                    FroyoRunningStatus::Good => (0, 0),
+                },
+            };
+            try!(DbusContext::update_one(&dc.status_prop, status.into()));
+            try!(DbusContext::update_one(&dc.running_status_prop, r_status.into()));
+        }
+        Ok(())
     }
 }
 

@@ -36,7 +36,7 @@ its uuid. These can be enumerated using the DBus `ObjectManager` API.
 Property changes will cause `PropertiesChanged` signals except where
 noted.
 
-##### RO Property: `Name`
+##### RO Property: `Name` (string)
 
 The friendly name of the Froyodev.
 
@@ -46,9 +46,8 @@ In Args: `NewName`(string)
 
 Change the friendly name of the Froyo device.
 
-##### RO Property: `Capacity`
-
-`RemainingSectors`(u64), `TotalSectors`(u64)
+##### RO Property: `RemainingSectors` (u64)
+##### RO Property: `TotalSectors` (u64)
 
 The remaining and total 512-byte sectors that the
 Froyodev currently has available for user data. Both of these numbers
@@ -56,19 +55,17 @@ may change, as more or less data is stored on the Froyodev, and also
 increase or decrease if block devices are added or removed from the
 Froyodev.
 
-Due to frequently changing, this property does not emit
+Due to frequently changing, these properties do not emit
 `PropertyChanged` signals. Clients looking to track almost-full
 conditions should track signals from the Status property and look for
-write-throttling, as shown by bit 10 of `FroyoRunningStatus`.
+write-throttling, as shown by bit 11 of `RunningStatus`.
 
-##### RO Property: `Status`
+##### RO Property: `Status` (u32)
+##### RO Property: `RunningStatus` (u32)
 
-`FroyoStatus`(u32), `FroyoRunningStatus`(u32)
-
-`FroyoStatus` of 0 indicates the Froyodev is successfully online. Bits
-set in FroyoStatus indicate the Froyodev has failed to start due to an
+`Status` of 0 indicates the Froyodev is successfully online. Bits
+set in Status indicate the Froyodev has failed to start due to an
 issue with a particular area:
-
 
 | Bit | Description
 |-----|----------------
@@ -80,10 +77,10 @@ issue with a particular area:
 |12   |Filesystem failure. The filesystem has experienced a failure.
 |13-31|Reserved or unenumerated failure.
 
-`FroyoRunningStatus` is also returned, but will only be valid if
-`FroyoStatus` is 0 -- that is, if the Froyodev is started. If
-`FroyoRunningStatus` is 0, the Froyodev's operation is normal. Bits set
-in `FroyoRunningStatus` indicate the device is running non-optimally in
+`RunningStatus` is also returned, but will only be valid if
+`Status` is 0 -- that is, if the Froyodev is started. If
+`RunningStatus` is 0, the Froyodev's operation is normal. Bits set
+in `RunningStatus` indicate the device is running non-optimally in
 some way:
 
 | Bit | Description
@@ -91,8 +88,8 @@ some way:
 |0-7  |Missing Block devices. This `u8` indicates how many more devices are needed for full operation.
 |8    |Non-redundant. This will likely be set if the above field is nonzero, but may not be if the Froyodev had a redundancy of 2 or greater to start.
 |9    |Cannot reshape. The Froyodev is non-redundant and does not have enough free space to re-establish redundancy without additional resources. See the `Reshape` command.
-|10   |Throttled. The Froyodev's write speed has been throttled to avoid running out of space.
-|11   |Reshaping. The Froyodev is currently reshaping. Read and write performance may be affected.
+|10   |Reshaping. The Froyodev is currently reshaping. Read and write performance may be affected.
+|11   |Throttled. The Froyodev's write speed has been throttled to avoid running out of space.
 |12-31|Reserved or unenumerated issue that does not prevent operation.
 
 ##### RO Property: `BlockDevices`
@@ -132,7 +129,7 @@ No In or Out arguments
 The Froyodev will reconfigure itself in the background to operate
 redundantly with the block devices it currently has available. This
 will likely fail if bit 9 (`Cannot Reshape`) in the `Status`
-property's `FroyoRunningStatus` field is set. Reshape operation will
+property's `RunningStatus` field is set. Reshape operation will
 begin immediately and will impact the performance of other I/O
 operations to the Froyodev.
 

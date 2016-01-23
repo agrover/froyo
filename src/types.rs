@@ -137,6 +137,7 @@ pub enum FroyoError {
     Io(io::Error),
     Serde(serde_json::error::Error),
     Nix(nix::Error),
+    Dbus(()),
 }
 
 impl fmt::Display for FroyoError {
@@ -145,6 +146,7 @@ impl fmt::Display for FroyoError {
             FroyoError::Io(ref err) => write!(f, "IO error: {}", err),
             FroyoError::Serde(ref err) => write!(f, "Serde error: {}", err),
             FroyoError::Nix(ref err) => write!(f, "Nix error: {}", err.errno().desc()),
+            FroyoError::Dbus(()) => write!(f, "Dbus error"),
         }
     }
 }
@@ -155,6 +157,7 @@ impl Error for FroyoError {
             FroyoError::Io(ref err) => err.description(),
             FroyoError::Serde(ref err) => Error::description(err),
             FroyoError::Nix(ref err) => err.errno().desc(),
+            FroyoError::Dbus(()) => "Dbus error",
         }
     }
 
@@ -163,6 +166,7 @@ impl Error for FroyoError {
             FroyoError::Io(ref err) => Some(err),
             FroyoError::Serde(ref err) => Some(err),
             FroyoError::Nix(_) => None,
+            FroyoError::Dbus(()) => None,
         }
     }
 }
@@ -182,5 +186,11 @@ impl From<serde_json::error::Error> for FroyoError {
 impl From<nix::Error> for FroyoError {
     fn from(err: nix::Error) -> FroyoError {
         FroyoError::Nix(err)
+    }
+}
+
+impl From<()> for FroyoError {
+    fn from(err: ()) -> FroyoError {
+        FroyoError::Dbus(err)
     }
 }

@@ -312,7 +312,7 @@ impl ThinDev {
         try!(dm.device_suspend(id, DM_SUSPEND));
         try!(dm.device_suspend(id, DmFlags::empty()));
 
-        // TODO filesystem still needs to be told to use extra space
+        // TODO: filesystem still needs to be told to use extra space
 
         Ok(())
     }
