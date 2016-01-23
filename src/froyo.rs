@@ -62,10 +62,11 @@ pub enum FroyoWorkingStatus {
 }
 
 impl Froyo {
-    pub fn create<T>(name: &str, id: &str, paths: &[T], force: bool)
+    pub fn create<T>(name: &str, paths: &[T], force: bool)
                      -> FroyoResult<Froyo>
         where T: Borrow<Path>
     {
+        let id = Uuid::new_v4().to_simple_string();
         let mut block_devs = BTreeMap::new();
         for path in paths {
             let bd = Rc::new(RefCell::new(
@@ -117,7 +118,7 @@ impl Froyo {
 
         Ok(Froyo {
             name: name.to_owned(),
-            id: id.to_owned(),
+            id: id,
             block_devs: block_devs,
             raid_devs: raid_devs,
             thin_pool_dev: thin_pool_dev,

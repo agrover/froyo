@@ -51,7 +51,6 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use clap::{App, Arg, SubCommand, ArgMatches};
-use uuid::Uuid;
 use bytesize::ByteSize;
 use dbus::{Connection, BusType};
 
@@ -124,7 +123,7 @@ fn create(args: &ArgMatches) -> FroyoResult<()> {
         .collect();
     let force = args.is_present("force");
 
-    let froyo = try!(Froyo::create(name, &Uuid::new_v4().to_simple_string(), &dev_paths, force));
+    let froyo = try!(Froyo::create(name, &dev_paths, force));
 
     try!(froyo.save_state());
 
