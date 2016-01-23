@@ -2,44 +2,106 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use std::borrow::Borrow;
+
 use dbus::{Connection, NameFlag};
 use dbus::tree::Factory;
 use dbus::tree::Tree;
-use dbus::tree::MethodFn;
+use dbus::tree::{MethodFn, MethodErr};
+use dbus::MessageItem;
 
 use froyo::Froyo;
 use types::FroyoResult;
+
+fn dbus_froyo_create<T>(name: &str, blockdevs: &[T], force: bool) -> FroyoResult<String>
+    where T: Borrow<str> {
+    println!("creating froyodev {}", name);
+    for bd in blockdevs {
+        println!("blockdev path {}", bd.borrow())
+    }
+    println!("force: {}", force);
+
+    Ok("dude".to_owned())
+}
 
 pub fn get_tree<'a>(c: &Connection, froyos: &[Froyo])
                        -> FroyoResult<Tree<MethodFn<'a>>> {
     c.register_name("org.freedesktop.Froyo1", NameFlag::ReplaceExisting as u32).unwrap();
 
     let f = Factory::new_fn();
+
+    let create_method = f.method("Create", |m,_,_| {
+        let mut items = m.get_items();
+        if items.len() < 3 {
+            return Err(MethodErr::no_arg())
+        }
+
+        let force: bool = try!(items.pop().ok_or_else(MethodErr::no_arg)
+                               .and_then(|i| i.inner().map_err(|_| MethodErr::invalid_arg(&i))));
+        let blockdevs = match try!(items.pop().ok_or_else(MethodErr::no_arg)) {
+            MessageItem::Array(x, _) => x,
+            x => return Err(MethodErr::invalid_arg(&x)),
+        };
+        let blockdevs = blockdevs.into_iter()
+            .map(|x| x.inner::<&str>().unwrap().to_owned())
+            .collect::<Vec<_>>();
+
+        let name = try!(items.pop().ok_or_else(MethodErr::no_arg)
+                        .and_then(|i| i.inner::<&str>()
+                                  .map_err(|_| MethodErr::invalid_arg(&i))
+                                  .map(|i| i.to_owned())));
+
+        if let Err(_) = dbus_froyo_create(&name, &blockdevs, force) {
+            return Err(MethodErr::failed(&format!("dude")));
+        }
+
+        let s = "asdasdaaaaa".to_owned();
+        let mr = m.method_return().append(s);
+        Ok(vec![mr])
+    })
+        .in_arg(("name", "s"))
+        .in_arg(("blockdevs", "as"))
+        .in_arg(("force", "b"))
+        .out_arg(("obj_path", "s"));
+
+    let tree = f.tree();
+    let tree = tree
+        .add(f.object_path("/org/freedesktop/froyo")
+             .introspectable()
+             .object_manager()
+             .add(f.interface("org.freedesktop.FroyoService1")
+                  .add_m(create_method)
+             ));
+
     let tree = froyos
         .iter()
-        .fold(f.tree(), |tree, froyo| {
-            tree.add(f.object_path(format!("/org/freedesktop/froyo/devs/{}", froyo.name))
+        .fold(tree, |tree, froyo| {
+
+            let mut iface = f.interface("org.freedesktop.FroyoDevice1");
+            let p = iface.add_p_ref(f.property("Name", froyo.name.to_owned()));
+            let iface = iface.add_m(f.method("SetName", move |m,_,_| {
+                let mut items = m.get_items();
+                if items.len() < 1 {
+                    return Err(MethodErr::no_arg())
+                }
+
+                let name = try!(items.pop().ok_or_else(MethodErr::no_arg)
+                                .and_then(|i| i.inner::<&str>()
+                                          .map_err(|_| MethodErr::invalid_arg(&i))
+                                          .map(|i| i.to_owned())));
+
+                try!(p.set_value(name.into())
+                     .map_err(|_| MethodErr::invalid_arg(&"name")));
+                Ok(vec![m.method_return()])
+            })
+                                    .in_arg(("new_name", "s")));
+
+            tree.add(f.object_path(format!("/org/freedesktop/froyo/{}", froyo.id))
                      .introspectable()
-                     .object_manager()
-                     .add(f.interface("org.freedesktop.FroyoService1")
-                          .add_m(f.method("Capacity", |m,_,_| {
-                              let s = vec![1u64.into(), 3u64.into(), 5u64.into(), 7u64.into()];
-                              let mut mr = m.method_return();
-                              mr.append_items(&*s);
-                              Ok(vec![mr])
-                          }).out_arg(("reply", "(tttt)")))
-                          .add_m(f.method("Status", |m,_,_| {
-                              Ok(vec![m.method_return()
-                                  .append(0)
-                                  .append(1)
-                                  .append("good")
-                                  .append(4)
-                                  .append("great")])
-                          }).out_arg(("reply", "(uusus)")))
-                          )
-                     )
+                     .add(iface))
         });
 
+    println!("tree {:#?}", tree);
     tree.set_registered(&c, true).unwrap();
 
     Ok(tree)

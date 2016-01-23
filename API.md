@@ -29,7 +29,7 @@ Returns the object path of the newly created Froyodev.
 
 ### Froyodev paths
 
-`/org/freedesktop/froyo/devs/<uuid>`
+`/org/freedesktop/froyo/<uuid>`
 
 Each Froyodev present on the system will have an object here based on
 its uuid. These can be enumerated using the DBus `ObjectManager` API.

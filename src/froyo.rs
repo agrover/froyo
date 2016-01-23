@@ -39,7 +39,7 @@ struct FroyoSave {
 
 #[derive(Debug, Clone)]
 pub struct Froyo {
-    id: String,
+    pub id: String,
     pub name: String,
     block_devs: BTreeMap<String, Rc<RefCell<BlockDev>>>,
     raid_devs: BTreeMap<String, Rc<RefCell<RaidDev>>>,

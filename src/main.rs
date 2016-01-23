@@ -150,7 +150,7 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
     // TODO: event loop needs to handle dbus and also dm events (or polling)
     // so we can extend/reshape/delay/whatever in a timely fashion
     for _ in tree.run(&c, c.iter(1000)) {
-        println!("hi");
+
     }
 
     Ok(())
