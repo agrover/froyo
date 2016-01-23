@@ -5,6 +5,7 @@
 use std::borrow::Borrow;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::path::PathBuf;
 
 use dbus::{Connection, NameFlag};
 use dbus::tree::Factory;
@@ -15,26 +16,16 @@ use dbus::MessageItem;
 use froyo::Froyo;
 use types::FroyoResult;
 
-fn dbus_froyo_create<T>(name: &str, blockdevs: &[T], force: bool) -> FroyoResult<String>
-    where T: Borrow<str> {
-    println!("creating froyodev {}", name);
-    for bd in blockdevs {
-        println!("blockdev path {}", bd.borrow())
-    }
-    println!("force: {}", force);
-
-    Ok("dude".to_owned())
-}
-
-pub fn get_tree<'a>(c: &Connection, froyos: Rc<RefCell<Vec<Rc<RefCell<Froyo>>>>>)
+pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo>>>>>)
                        -> FroyoResult<Tree<MethodFn<'a>>> {
     c.register_name("org.freedesktop.Froyo1", NameFlag::ReplaceExisting as u32).unwrap();
 
     let f = Factory::new_fn();
 
+    let froyos_closed_over = froyos.clone();
     let froyos = RefCell::borrow(&froyos);
 
-    let create_method = f.method("Create", |m,_,_| {
+    let create_method = f.method("Create", move |m,_,_| {
         let mut items = m.get_items();
         if items.len() < 3 {
             return Err(MethodErr::no_arg())
@@ -47,7 +38,7 @@ pub fn get_tree<'a>(c: &Connection, froyos: Rc<RefCell<Vec<Rc<RefCell<Froyo>>>>>
             x => return Err(MethodErr::invalid_arg(&x)),
         };
         let blockdevs = blockdevs.into_iter()
-            .map(|x| x.inner::<&str>().unwrap().to_owned())
+            .map(|x| PathBuf::from(x.inner::<&str>().unwrap()))
             .collect::<Vec<_>>();
 
         let name = try!(items.pop().ok_or_else(MethodErr::no_arg)
@@ -55,12 +46,16 @@ pub fn get_tree<'a>(c: &Connection, froyos: Rc<RefCell<Vec<Rc<RefCell<Froyo>>>>>
                                   .map_err(|_| MethodErr::invalid_arg(&i))
                                   .map(|i| i.to_owned())));
 
-        if let Err(_) = dbus_froyo_create(&name, &blockdevs, force) {
-            return Err(MethodErr::failed(&format!("dude")));
-        }
+        let froyo = match Froyo::create(&name, &blockdevs, force) {
+            Ok(x) => x,
+            Err(_) => return Err(MethodErr::failed(&format!("dude"))),
+        };
 
-        let s = "asdasdaaaaa".to_owned();
+        let s = format!("/org/freedesktop/froyo/{}", froyo.id);
         let mr = m.method_return().append(s);
+
+        RefCell::borrow_mut(&froyos_closed_over).push(Rc::new(RefCell::new(froyo)));
+
         Ok(vec![mr])
     })
         .in_arg(("name", "s"))

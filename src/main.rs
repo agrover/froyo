@@ -149,8 +149,8 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
     let froyos = froyos.into_iter()
         .map(|f| Rc::new(RefCell::new(f)))
         .collect::<Vec<_>>();
-    let froyos = Rc::new(RefCell::new(froyos));
-    let tree = try!(dbus_api::get_tree(&c, froyos.clone()));
+    let mut froyos = Rc::new(RefCell::new(froyos));
+    let tree = try!(dbus_api::get_tree(&c, &mut froyos));
 
     // TODO: event loop needs to handle dbus and also dm events (or polling)
     // so we can extend/reshape/delay/whatever in a timely fashion
