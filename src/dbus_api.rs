@@ -48,8 +48,10 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
 
         let froyo = match Froyo::create(&name, &blockdevs, force) {
             Ok(x) => x,
-            Err(_) => return Err(MethodErr::failed(&format!("dude"))),
+            Err(_) => return Err(MethodErr::failed(&"Froyo create failed")),
         };
+        try!(froyo.save_state()
+             .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
 
         let s = format!("/org/freedesktop/froyo/{}", froyo.id);
         let mr = m.method_return().append(s);
@@ -91,7 +93,11 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                                               .map_err(|_| MethodErr::invalid_arg(&i))
                                               .map(|i| i.to_owned())));
 
-                    RefCell::borrow_mut(&*froyo_closed_over).name = name.clone();
+                    let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
+                    froyo.name = name.clone();
+                    try!(froyo.save_state()
+                         .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
+
                     try!(p.set_value(name.into())
                          .map_err(|_| MethodErr::invalid_arg(&"name")));
                     Ok(vec![m.method_return()])
