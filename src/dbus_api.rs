@@ -3,6 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use std::borrow::Borrow;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use dbus::{Connection, NameFlag};
 use dbus::tree::Factory;
@@ -24,11 +26,13 @@ fn dbus_froyo_create<T>(name: &str, blockdevs: &[T], force: bool) -> FroyoResult
     Ok("dude".to_owned())
 }
 
-pub fn get_tree<'a>(c: &Connection, froyos: &[Froyo])
+pub fn get_tree<'a>(c: &Connection, froyos: Rc<RefCell<Vec<Rc<RefCell<Froyo>>>>>)
                        -> FroyoResult<Tree<MethodFn<'a>>> {
     c.register_name("org.freedesktop.Froyo1", NameFlag::ReplaceExisting as u32).unwrap();
 
     let f = Factory::new_fn();
+
+    let froyos = RefCell::borrow(&froyos);
 
     let create_method = f.method("Create", |m,_,_| {
         let mut items = m.get_items();
@@ -78,25 +82,29 @@ pub fn get_tree<'a>(c: &Connection, froyos: &[Froyo])
         .fold(tree, |tree, froyo| {
 
             let mut iface = f.interface("org.freedesktop.FroyoDevice1");
-            let p = iface.add_p_ref(f.property("Name", froyo.name.to_owned()));
-            let iface = iface.add_m(f.method("SetName", move |m,_,_| {
-                let mut items = m.get_items();
-                if items.len() < 1 {
-                    return Err(MethodErr::no_arg())
-                }
+            let p = iface.add_p_ref(f.property("Name", RefCell::borrow(&*froyo).name.to_owned()));
+            let froyo_closed_over = froyo.clone();
+            let iface = iface.add_m(
+                f.method("SetName", move |m,_,_| {
+                    let mut items = m.get_items();
+                    if items.len() < 1 {
+                        return Err(MethodErr::no_arg())
+                    }
 
-                let name = try!(items.pop().ok_or_else(MethodErr::no_arg)
-                                .and_then(|i| i.inner::<&str>()
-                                          .map_err(|_| MethodErr::invalid_arg(&i))
-                                          .map(|i| i.to_owned())));
+                    let name = try!(items.pop().ok_or_else(MethodErr::no_arg)
+                                    .and_then(|i| i.inner::<&str>()
+                                              .map_err(|_| MethodErr::invalid_arg(&i))
+                                              .map(|i| i.to_owned())));
 
-                try!(p.set_value(name.into())
-                     .map_err(|_| MethodErr::invalid_arg(&"name")));
-                Ok(vec![m.method_return()])
-            })
-                                    .in_arg(("new_name", "s")));
+                    RefCell::borrow_mut(&*froyo_closed_over).name = name.clone();
+                    try!(p.set_value(name.into())
+                         .map_err(|_| MethodErr::invalid_arg(&"name")));
+                    Ok(vec![m.method_return()])
+                })
+                    .in_arg(("new_name", "s")));
 
-            tree.add(f.object_path(format!("/org/freedesktop/froyo/{}", froyo.id))
+            let path = format!("/org/freedesktop/froyo/{}", RefCell::borrow(&*froyo).id);
+            tree.add(f.object_path(path)
                      .introspectable()
                      .add(iface))
         });

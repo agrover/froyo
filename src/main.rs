@@ -145,7 +145,11 @@ fn dump_meta(args: &ArgMatches) -> FroyoResult<()> {
 fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
     let c = Connection::get_private(BusType::Session).unwrap();
     let froyos = try!(Froyo::find_all());
-    let tree = try!(dbus_api::get_tree(&c, &froyos));
+    let froyos = froyos.into_iter()
+        .map(|f| Rc::new(RefCell::new(f)))
+        .collect::<Vec<_>>();
+    let froyos = Rc::new(RefCell::new(froyos));
+    let tree = try!(dbus_api::get_tree(&c, froyos.clone()));
 
     // TODO: event loop needs to handle dbus and also dm events (or polling)
     // so we can extend/reshape/delay/whatever in a timely fashion
