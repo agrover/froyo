@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use std::collections::BTreeMap;
 use std::borrow::Borrow;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -23,6 +24,7 @@ pub struct DbusContext<'a> {
     pub total_prop: Arc<Property<MethodFn<'a>>>,
     pub status_prop: Arc<Property<MethodFn<'a>>>,
     pub running_status_prop: Arc<Property<MethodFn<'a>>>,
+    pub block_devices_prop: Arc<Property<MethodFn<'a>>>,
 }
 
 impl<'a> DbusContext<'a> {
@@ -31,6 +33,26 @@ impl<'a> DbusContext<'a> {
         prop.set_value(m);
         // TODO: result is signals we need to be sending for PropertyChanged???
         Ok(())
+    }
+
+    pub fn get_block_devices_msgitem(block_devs: &BTreeMap<String, BlockMember>)
+                                     -> MessageItem {
+        let mut msg_vec = Vec::new();
+        for (_, bd) in block_devs {
+            let (bd_path, bd_status) = match *bd {
+                BlockMember::Present(ref bd) =>
+                // TODO: in-use vs not-in-use
+                    (RefCell::borrow(&bd).path.to_string_lossy().into_owned(), 0u32),
+                BlockMember::Absent(ref sbd) =>
+                    (sbd.path.to_string_lossy().into_owned(), 3u32),
+            };
+
+            let entry = MessageItem::Struct(vec![bd_path.into(), bd_status.into()]);
+            msg_vec.push(entry);
+        }
+
+        MessageItem::new_array(msg_vec)
+            .expect("Froyodev with no blockdev members???")
     }
 }
 
@@ -133,17 +155,10 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
 
             let mut froyo = RefCell::borrow_mut(froyo);
 
-            // WIP: BlockDevices property
-            let mut msg_vec: Vec<MessageItem> = Vec::new();
-            for (_, bd) in &froyo.block_devs {
-                let path: String = match *bd {
-                    BlockMember::Present(ref bd) =>
-                        RefCell::borrow(&bd).path.to_string_lossy().into_owned(),
-                    BlockMember::Absent(ref sbd) =>
-                        sbd.path.to_string_lossy().into_owned(),
-                };
-                msg_vec.push(path.into());
-            }
+            // Need to actually get values b/c I can't figure out how to
+            // get a 0-length array of struct
+            let bdev_msg = DbusContext::get_block_devices_msgitem(&froyo.block_devs);
+            let block_devices_p = iface.add_p_ref(f.property("BlockDevices", bdev_msg));
 
             // TODO: AddBlockDevice method
             // TODO: RemoveBlockDevice method
@@ -156,6 +171,7 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                 total_prop: tot_p,
                 status_prop: status_p,
                 running_status_prop: running_status_p,
+                block_devices_prop: block_devices_p,
             });
 
             tree.add(f.object_path(path)
