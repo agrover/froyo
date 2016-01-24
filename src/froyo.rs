@@ -17,7 +17,7 @@ use devicemapper::DM;
 use serde_json;
 use time;
 
-use blockdev::{BlockDev, BlockDevSave};
+use blockdev::{BlockDev, BlockDevSave, BlockMember};
 use blockdev::{LinearDev, LinearSegment};
 use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus, RaidMember};
 use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus};
@@ -42,7 +42,7 @@ struct FroyoSave {
 pub struct Froyo<'a> {
     pub id: String,
     pub name: String,
-    block_devs: BTreeMap<String, Rc<RefCell<BlockDev>>>,
+    pub block_devs: BTreeMap<String, BlockMember>,
     raid_devs: BTreeMap<String, Rc<RefCell<RaidDev>>>,
     thin_pool_dev: ThinPoolDev,
     thin_devs: Vec<ThinDev>,
@@ -71,9 +71,9 @@ impl<'a> Froyo<'a> {
         let id = Uuid::new_v4().to_simple_string();
         let mut block_devs = BTreeMap::new();
         for path in paths {
-            let bd = Rc::new(RefCell::new(
-                try!(BlockDev::initialize(&id, path.borrow(), force))));
-            block_devs.insert(RefCell::borrow(&bd).id.clone(), bd.clone());
+            let bd = try!(BlockDev::initialize(&id, path.borrow(), force));
+            block_devs.insert(bd.id.clone(),
+                              BlockMember::Present(Rc::new(RefCell::new(bd))));
         }
 
         if paths.len() < 2 {
@@ -135,7 +135,14 @@ impl<'a> Froyo<'a> {
             name: self.name.to_owned(),
             id: self.id.to_owned(),
             block_devs: self.block_devs.iter()
-                .map(|(id, bd)| (id.clone(), RefCell::borrow(bd).to_save()))
+                .map(|(id, bd)| {
+                    match *bd {
+                        BlockMember::Present(ref bd) =>
+                            (id.clone(), RefCell::borrow(&bd).to_save()),
+                        BlockMember::Absent(ref sbd) =>
+                            (id.clone(), sbd.clone()),
+                    }
+                })
                 .collect(),
             raid_devs: self.raid_devs.iter()
                 .map(|(id, rd)| (id.clone(), RefCell::borrow(rd).to_save()))
@@ -203,6 +210,7 @@ impl<'a> Froyo<'a> {
         Ok(None)
     }
 
+    #[allow(cyclomatic_complexity)]
     fn from_save(froyo_save: FroyoSave, froyo_id: String, blockdevs: Vec<BlockDev>)
                  -> FroyoResult<Froyo<'a>> {
         let mut bd_map = blockdevs.into_iter()
@@ -212,14 +220,22 @@ impl<'a> Froyo<'a> {
         let mut block_devs = BTreeMap::new();
         for (id, sbd) in &froyo_save.block_devs {
             match bd_map.remove(id) {
-                Some(x) => { block_devs.insert(id.clone(), Rc::new(RefCell::new(x))); },
-                None => ::dbgp!("missing a blockdev: id {} path {}", id,
-                                sbd.path.display()),
+                Some(x) => {
+                    block_devs.insert(
+                        id.clone(), BlockMember::Present(Rc::new(RefCell::new(x))));
+                },
+                None => {
+                    ::dbgp!("missing a blockdev: id {} path {}", id,
+                            sbd.path.display());
+                    block_devs.insert(
+                        id.clone(), BlockMember::Absent(sbd.clone()));
+                }
             }
         }
 
         for (_, bd) in bd_map {
-            dbgp!("{} header indicates it's part of {} but not found in metadata",
+            dbgp!("{} header indicates it's part of {} but \
+                   not found in metadata, ignoring",
                   bd.path.display(), froyo_save.name);
         }
 
@@ -242,16 +258,26 @@ impl<'a> Froyo<'a> {
             for (m_num, sld) in srd.members.iter().enumerate() {
                 match block_devs.get(&sld.parent) {
                     Some(bd) => {
-                        let ld = Rc::new(RefCell::new(try!(LinearDev::create(
-                            &dm, &format!("{}-{}-{}", froyo_save.name, id, m_num),
-                            bd, &sld.meta_segments, &sld.data_segments))));
-
-                        bd.borrow_mut().linear_devs.push(ld.clone());
-                        linear_devs.push(RaidMember::Present(ld));
+                        match *bd {
+                            BlockMember::Present(ref bd) => {
+                                let ld = Rc::new(RefCell::new(try!(LinearDev::create(
+                                    &dm, &format!("{}-{}-{}", froyo_save.name, id, m_num),
+                                    &bd, &sld.meta_segments, &sld.data_segments))));
+                                bd.borrow_mut().linear_devs.push(ld.clone());
+                                linear_devs.push(RaidMember::Present(ld));
+                            },
+                            BlockMember::Absent(_) => {
+                                dbgp!("Parent {} missing for a linear device", sld.parent);
+                                linear_devs.push(RaidMember::Absent(sld.clone()));
+                            },
+                        }
                     },
                     None => {
-                        dbgp!("could not find parent {} for a linear device", sld.parent);
-                        linear_devs.push(RaidMember::Absent(sld.clone()));
+                        return Err(FroyoError::Io(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            format!("Invalid metadata, raiddev {} references blockdev {} \
+                                     that is not found in blockdev list",
+                                    id, sld.parent))))
                     },
                 }
             }
@@ -340,7 +366,7 @@ impl<'a> Froyo<'a> {
     fn create_redundant_zone(
         dm: &DM,
         name: &str,
-        block_devs: &BTreeMap<String, Rc<RefCell<BlockDev>>>)
+        block_devs: &BTreeMap<String, BlockMember>)
         -> FroyoResult<Option<RaidDev>> {
 
         // TODO: Make sure name has only chars we can use in a DM name
@@ -348,7 +374,13 @@ impl<'a> Froyo<'a> {
         // get common data area size, allowing for Froyo data at start and end
         let mut bd_areas: Vec<_> = block_devs.iter()
             .filter_map(|(_, bd)| {
-                match RefCell::borrow(bd).largest_avail_area() {
+                if let BlockMember::Present(ref bd) = *bd {
+                    Some(bd)
+                } else {
+                    None
+                }})
+            .filter_map(|bd| {
+                match RefCell::borrow(&*bd).largest_avail_area() {
                     Some(x) => Some((bd.clone(), x)),
                     None => None,
                 }
@@ -430,7 +462,9 @@ impl<'a> Froyo<'a> {
         let current_time = time::now().to_timespec();
 
         for (_, bd) in &self.block_devs {
-            try!(bd.borrow_mut().save_state(&current_time, metadata.as_bytes()))
+            if let BlockMember::Present(ref bd) = *bd {
+                try!(bd.borrow_mut().save_state(&current_time, metadata.as_bytes()))
+            }
         }
 
         Ok(())

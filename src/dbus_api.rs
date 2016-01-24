@@ -13,6 +13,7 @@ use dbus::tree::{Factory, Tree, Property, MethodFn, MethodErr, EmitsChangedSigna
 use dbus::MessageItem;
 
 use froyo::Froyo;
+use blockdev::BlockMember;
 use types::FroyoResult;
 
 #[derive(Debug, Clone)]
@@ -131,6 +132,23 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
             let running_status_p = iface.add_p_ref(f.property("RunningStatus", 0u32));
 
             let mut froyo = RefCell::borrow_mut(froyo);
+
+            // WIP: BlockDevices property
+            let mut msg_vec: Vec<MessageItem> = Vec::new();
+            for (_, bd) in &froyo.block_devs {
+                let path: String = match *bd {
+                    BlockMember::Present(ref bd) =>
+                        RefCell::borrow(&bd).path.to_string_lossy().into_owned(),
+                    BlockMember::Absent(ref sbd) =>
+                        sbd.path.to_string_lossy().into_owned(),
+                };
+                msg_vec.push(path.into());
+            }
+
+            // TODO: AddBlockDevice method
+            // TODO: RemoveBlockDevice method
+            // TODO: Reshape method
+
             let path = format!("/org/freedesktop/froyo/{}", froyo.id);
             froyo.dbus_context = Some(DbusContext {
                 name_prop: name_p,
@@ -144,11 +162,6 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                      .introspectable()
                      .add(iface))
         });
-
-    // TODO: BlockDevices property
-    // TODO: AddBlockDevice method
-    // TODO: RemoveBlockDevice method
-    // TODO: Reshape method
 
     for froyo in &*froyos {
         try!(RefCell::borrow(&froyo).update_dbus());

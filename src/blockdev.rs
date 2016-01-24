@@ -48,6 +48,12 @@ pub struct BlockDev {
     pub linear_devs: Vec<Rc<RefCell<LinearDev>>>,
 }
 
+#[derive(Debug, Clone)]
+pub enum BlockMember {
+    Present(Rc<RefCell<BlockDev>>),
+    Absent(BlockDevSave),
+}
+
 impl BlockDev {
     pub fn new(path: &Path) -> io::Result<BlockDev> {
         let dev = try!(Device::from_str(&path.to_string_lossy()));
