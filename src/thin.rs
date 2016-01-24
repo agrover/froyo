@@ -61,7 +61,7 @@ impl ThinPoolDev {
                name: &str,
                meta_segs: Vec<RaidSegment>,
                data_segs: Vec<RaidSegment>)
-               -> io::Result<ThinPoolDev> {
+               -> FroyoResult<ThinPoolDev> {
         // meta
         let meta_name = format!("thin-meta-{}", name);
         let meta_raid_dev = try!(RaidLinearDev::create(
@@ -99,7 +99,7 @@ impl ThinPoolDev {
         low_water_blocks: DataBlocks,
         meta_raid_dev: RaidLinearDev,
         data_raid_dev: RaidLinearDev)
-        -> io::Result<ThinPoolDev> {
+        -> FroyoResult<ThinPoolDev> {
 
         let params = format!("{}:{} {}:{} {} {}",
                              meta_raid_dev.dev.major,

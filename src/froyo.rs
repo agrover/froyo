@@ -210,10 +210,11 @@ impl<'a> Froyo<'a> {
         Ok(None)
     }
 
-    #[allow(cyclomatic_complexity)]
-    fn from_save(froyo_save: FroyoSave, froyo_id: String, blockdevs: Vec<BlockDev>)
-                 -> FroyoResult<Froyo<'a>> {
-        let mut bd_map = blockdevs.into_iter()
+    fn from_save_blockdevs(
+        froyo_save: &FroyoSave,
+        found_block_devs: Vec<BlockDev>)
+        -> FroyoResult<BTreeMap<String, BlockMember>> {
+        let mut bd_map = found_block_devs.into_iter()
             .map(|x| (x.id.clone(), x))
             .collect::<BTreeMap<_, _>>();
 
@@ -250,6 +251,13 @@ impl<'a> Froyo<'a> {
                         num, froyo_save.block_devs.len(), froyo_save.name)))),
         }
 
+        Ok(block_devs)
+    }
+
+    fn from_save_raiddevs(
+        froyo_save: &FroyoSave,
+        block_devs: &BTreeMap<String, BlockMember>)
+        -> FroyoResult<BTreeMap<String, Rc<RefCell<RaidDev>>>> {
         let dm = try!(DM::new());
 
         let mut raid_devs = BTreeMap::new();
@@ -294,50 +302,67 @@ impl<'a> Froyo<'a> {
             let id = RefCell::borrow(&rd).id.clone();
             raid_devs.insert(id, rd);
         }
+        Ok(raid_devs)
+    }
 
-        let thin_pool_dev = {
-            let tpd = &froyo_save.thin_pool_dev;
+    fn from_save_thinpool(
+        froyo_save: &FroyoSave,
+        raid_devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
+        -> FroyoResult<ThinPoolDev> {
+        let dm = try!(DM::new());
 
-            let meta_name = format!("thin-meta-{}", froyo_save.name);
-            let mut raid_segments = Vec::new();
-            for seg in &tpd.meta_dev.segments {
-                let parent = try!(raid_devs.get(&seg.parent).ok_or_else(||
-                    io::Error::new(io::ErrorKind::InvalidInput,
-                                   "Could not find meta's parent")));
-                raid_segments.push(
-                    RaidSegment::new(seg.start, seg.length, parent));
-            }
+        let tpd = &froyo_save.thin_pool_dev;
 
-            let meta_raid_dev = try!(RaidLinearDev::create(
-                &dm,
-                &meta_name,
-                &tpd.meta_dev.id,
-                raid_segments));
+        let meta_name = format!("thin-meta-{}", froyo_save.name);
+        let mut raid_segments = Vec::new();
+        for seg in &tpd.meta_dev.segments {
+            let parent = try!(raid_devs.get(&seg.parent).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput,
+                               "Could not find meta's parent")}));
+            raid_segments.push(
+                RaidSegment::new(seg.start, seg.length, parent));
+        }
 
-            let data_name = format!("thin-data-{}", froyo_save.name);
-            let mut raid_segments = Vec::new();
-            for seg in &tpd.data_dev.segments {
-                let parent = try!(raid_devs.get(&seg.parent).ok_or_else(||
-                    io::Error::new(io::ErrorKind::InvalidInput,
-                                   "Could not find data's parent")));
-                raid_segments.push(
-                    RaidSegment::new(seg.start, seg.length, parent));
-            }
+        let meta_raid_dev = try!(RaidLinearDev::create(
+            &dm,
+            &meta_name,
+            &tpd.meta_dev.id,
+            raid_segments));
 
-            let data_raid_dev = try!(RaidLinearDev::create(
-                &dm,
-                &data_name,
-                &tpd.data_dev.id,
-                raid_segments));
+        let data_name = format!("thin-data-{}", froyo_save.name);
+        let mut raid_segments = Vec::new();
+        for seg in &tpd.data_dev.segments {
+            let parent = try!(raid_devs.get(&seg.parent).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput,
+                               "Could not find data's parent")}));
+            raid_segments.push(
+                RaidSegment::new(seg.start, seg.length, parent));
+        }
 
-            try!(ThinPoolDev::create(
-                &dm,
-                &froyo_save.name,
-                tpd.data_block_size,
-                tpd.low_water_blocks,
-                meta_raid_dev,
-                data_raid_dev))
-        };
+        let data_raid_dev = try!(RaidLinearDev::create(
+            &dm,
+            &data_name,
+            &tpd.data_dev.id,
+            raid_segments));
+
+        ThinPoolDev::create(
+            &dm,
+            &froyo_save.name,
+            tpd.data_block_size,
+            tpd.low_water_blocks,
+            meta_raid_dev,
+            data_raid_dev)
+    }
+
+    fn from_save(froyo_save: FroyoSave, froyo_id: String, found_blockdevs: Vec<BlockDev>)
+                 -> FroyoResult<Froyo<'a>> {
+        let block_devs = try!(Froyo::from_save_blockdevs(&froyo_save, found_blockdevs));
+
+        let raid_devs = try!(Froyo::from_save_raiddevs(&froyo_save, &block_devs));
+
+        let thin_pool_dev = try!(Froyo::from_save_thinpool(&froyo_save, &raid_devs));
+
+        let dm = try!(DM::new());
 
         let mut thin_devs = Vec::new();
         for std in &froyo_save.thin_devs {
