@@ -644,10 +644,40 @@ impl<'a> Froyo<'a> {
             try!(DbusContext::update_one(&dc.status_prop, status.into()));
             try!(DbusContext::update_one(&dc.running_status_prop, r_status.into()));
 
-            let bdev_msg = DbusContext::get_block_devices_msgitem(&self.block_devs);
-            try!(DbusContext::update_one(&dc.block_devices_prop, bdev_msg));
+//            let bdev_msg = DbusContext::get_block_devices_msgitem(&self.block_devs);
+//            try!(DbusContext::update_one(&dc.block_devices_prop, bdev_msg));
         }
         Ok(())
     }
-}
 
+    pub fn add_block_device<T: Borrow<Path>>(&mut self, path: T, force: bool)
+                                             -> FroyoResult<()> {
+
+        let new_bd = try!(BlockDev::initialize(&self.id, path.borrow(), force));
+        self.block_devs.insert(
+            new_bd.id.clone(), BlockMember::Present(Rc::new(RefCell::new(new_bd))));
+        self.save_state();
+
+        // TODO: schedule a reshape?
+
+        Ok(())
+    }
+
+    pub fn remove_block_device<T: Borrow<Path>>(&mut self, path: T)
+                                                -> FroyoResult<()> {
+        // 1. if blockdev is not used by any raids, remove from self.block_devs,
+        // wipe superblock, save state, refresh dbus
+        //
+        // 2. if blockdev is used by raids but removing it from all raid would let them
+        // continue in degraded status, reload raids with RaidSegments missing and then
+        // do #1
+        //
+        // 3. if removing blockdev would break the Froyodev, fail
+        Ok(())
+    }
+
+    pub fn reshape(&mut self) -> FroyoResult<()> {
+        // TODO: kick off a reshape
+        Ok(())
+    }
+}

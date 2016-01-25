@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::borrow::Borrow;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dbus::{Connection, NameFlag};
@@ -153,16 +153,73 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
             let status_p = iface.add_p_ref(f.property("Status", 0u32));
             let running_status_p = iface.add_p_ref(f.property("RunningStatus", 0u32));
 
+            let froyo_closed_over = froyo.clone();
+            let iface = iface.add_m(
+                f.method("AddBlockDevice", move |m,_,_| {
+                    let mut items = m.get_items();
+                    if items.len() < 2 {
+                        return Err(MethodErr::no_arg())
+                    }
+
+                    let force: bool = try!(
+                        items.pop()
+                            .ok_or_else(MethodErr::no_arg)
+                            .and_then(
+                                |i| i.inner().map_err(|_| MethodErr::invalid_arg(&i))));
+
+                    let new_dev = try!(
+                        items.pop()
+                            .ok_or_else(MethodErr::no_arg)
+                            .and_then(|i| i.inner::<&str>()
+                                      .map_err(|_| MethodErr::invalid_arg(&i))
+                                      .map(|i| i.to_owned())));
+
+                    let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
+                    try!(froyo.add_block_device(Path::new(&new_dev), force)
+                        .map_err(|_| MethodErr::failed(&"Adding block device failed")));
+                    Ok(vec![m.method_return()])
+                })
+                    .in_arg(("new_device_path", "s"))
+                    .in_arg(("force", "b")));
+
+            let froyo_closed_over = froyo.clone();
+            let iface = iface.add_m(
+                f.method("RemoveBlockDevice", move |m,_,_| {
+                    let mut items = m.get_items();
+                    if items.len() < 1 {
+                        return Err(MethodErr::no_arg())
+                    }
+
+                    let removing_dev = try!(
+                        items.pop()
+                            .ok_or_else(MethodErr::no_arg)
+                            .and_then(|i| i.inner::<&str>()
+                                      .map_err(|_| MethodErr::invalid_arg(&i))
+                                      .map(|i| i.to_owned())));
+
+                    let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
+                    try!(froyo.remove_block_device(Path::new(&removing_dev))
+                        .map_err(|_| MethodErr::failed(&"Removing block device failed")));
+                    Ok(vec![m.method_return()])
+                })
+                    .in_arg(("new_device_path", "s")));
+
+            let froyo_closed_over = froyo.clone();
+            let mut iface = iface.add_m(
+                f.method("Reshape", move |m,_,_| {
+                    let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
+                    try!(froyo.reshape()
+                        .map_err(|_| MethodErr::failed(&"Reshape failed")));
+                    Ok(vec![m.method_return()])
+                }));
+
             let mut froyo = RefCell::borrow_mut(froyo);
 
             // Need to actually get values b/c I can't figure out how to
             // get a 0-length array of struct
             let bdev_msg = DbusContext::get_block_devices_msgitem(&froyo.block_devs);
-            let block_devices_p = iface.add_p_ref(f.property("BlockDevices", bdev_msg));
-
-            // TODO: AddBlockDevice method
-            // TODO: RemoveBlockDevice method
-            // TODO: Reshape method
+            // let block_devices_p = iface.add_p_ref(f.property("BlockDevices", bdev_msg));
+            let block_devices_p = iface.add_p_ref(f.property("BlockDevices", 0u32));
 
             let path = format!("/org/freedesktop/froyo/{}", froyo.id);
             froyo.dbus_context = Some(DbusContext {
