@@ -50,6 +50,7 @@ pub struct Froyo<'a> {
     pub dbus_context: Option<DbusContext<'a>>,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum FroyoStatus {
     Good(FroyoRunningStatus),
     RaidFailed,
@@ -57,6 +58,7 @@ pub enum FroyoStatus {
     ThinFailed,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum FroyoRunningStatus {
     Good,
     Degraded(u8),

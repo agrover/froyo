@@ -22,7 +22,7 @@ use types::{Sectors, SectorOffset, FroyoResult};
 use consts::*;
 use util::{setup_dm_dev, blkdev_size};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MDA {
     pub last_updated: Timespec,
     length: u32,
@@ -352,7 +352,7 @@ impl BlockDev {
 }
 
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct LinearSegment {
     pub start: SectorOffset,
     pub length: Sectors,

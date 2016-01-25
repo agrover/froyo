@@ -44,11 +44,13 @@ pub struct ThinPoolBlockUsage {
     pub total_data: DataBlocks,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum ThinPoolStatus {
     Good((ThinPoolWorkingStatus, ThinPoolBlockUsage)),
     Fail,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum ThinPoolWorkingStatus {
     Good,
     ReadOnly,
@@ -230,7 +232,7 @@ impl ThinPoolDev {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ThinDevSave {
     pub thin_number: u32,
     pub size: Sectors,
@@ -245,6 +247,7 @@ pub struct ThinDev {
     params: String,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum ThinStatus {
     Good(Sectors),
     Fail,
