@@ -218,8 +218,7 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
             // Need to actually get values b/c I can't figure out how to
             // get a 0-length array of struct
             let bdev_msg = DbusContext::get_block_devices_msgitem(&froyo.block_devs);
-            // let block_devices_p = iface.add_p_ref(f.property("BlockDevices", bdev_msg));
-            let block_devices_p = iface.add_p_ref(f.property("BlockDevices", 0u32));
+            let block_devices_p = iface.add_p_ref(f.property("BlockDevices", bdev_msg));
 
             let path = format!("/org/freedesktop/froyo/{}", froyo.id);
             froyo.dbus_context = Some(DbusContext {

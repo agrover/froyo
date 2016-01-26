@@ -646,8 +646,8 @@ impl<'a> Froyo<'a> {
             try!(DbusContext::update_one(&dc.status_prop, status.into()));
             try!(DbusContext::update_one(&dc.running_status_prop, r_status.into()));
 
-//            let bdev_msg = DbusContext::get_block_devices_msgitem(&self.block_devs);
-//            try!(DbusContext::update_one(&dc.block_devices_prop, bdev_msg));
+           let bdev_msg = DbusContext::get_block_devices_msgitem(&self.block_devs);
+           try!(DbusContext::update_one(&dc.block_devices_prop, bdev_msg));
         }
         Ok(())
     }
