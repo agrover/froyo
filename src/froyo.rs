@@ -116,6 +116,7 @@ impl<'a> Froyo<'a> {
         thin_devs.push(try!(ThinDev::new(
             &dm,
             &id,
+            name,
             0,
             Sectors::new(1024 * 1024 * 1024 / SECTOR_SIZE),
             &thin_pool_dev)));

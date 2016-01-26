@@ -257,6 +257,7 @@ impl ThinDev {
     pub fn new(
         dm: &DM,
         name: &str,
+        vol_name: &str,
         thin_number: u32,
         size: Sectors,
         pool_dev: &ThinPoolDev)
@@ -272,8 +273,8 @@ impl ThinDev {
             size,
             pool_dev));
 
-        try!(td.create_devnode(name));
-        try!(td.create_fs(name));
+        try!(td.create_devnode(vol_name));
+        try!(td.create_fs(vol_name));
 
         Ok(td)
     }
