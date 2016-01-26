@@ -93,7 +93,7 @@ impl<'a> Froyo<'a> {
 
         let mut raid_devs = BTreeMap::new();
         while let Some(rd) = try!(
-            Froyo::create_redundant_zone(&dm, name, &block_devs)) {
+            Froyo::create_redundant_zone(&dm, &id, &block_devs)) {
             raid_devs.insert(rd.id.clone(), Rc::new(RefCell::new(rd)));
         }
 
@@ -109,13 +109,13 @@ impl<'a> Froyo<'a> {
             io::Error::new(io::ErrorKind::InvalidInput,
                            "no space for thinpool data")));
         let thin_pool_dev = try!(ThinPoolDev::new(
-            &dm, name, meta_raid_segments, data_raid_segments));
+            &dm, &id, meta_raid_segments, data_raid_segments));
 
         let mut thin_devs = Vec::new();
         // Create an initial 1GB thin dev
         thin_devs.push(try!(ThinDev::new(
             &dm,
-            name,
+            &id,
             0,
             Sectors::new(1024 * 1024 * 1024 / SECTOR_SIZE),
             &thin_pool_dev)));
@@ -271,7 +271,7 @@ impl<'a> Froyo<'a> {
                         match *bd {
                             BlockMember::Present(ref bd) => {
                                 let ld = Rc::new(RefCell::new(try!(LinearDev::create(
-                                    &dm, &format!("{}-{}-{}", froyo_save.name, id, m_num),
+                                    &dm, &format!("{}-{}-{}", froyo_save.id, id, m_num),
                                     &bd, &sld.meta_segments, &sld.data_segments))));
                                 bd.borrow_mut().linear_devs.push(ld.clone());
                                 linear_devs.push(RaidMember::Present(ld));
@@ -295,7 +295,7 @@ impl<'a> Froyo<'a> {
             // TODO: handle when devs is less than what's in srd
             let rd = Rc::new(RefCell::new(try!(RaidDev::create(
                 &dm,
-                &froyo_save.name,
+                &froyo_save.id,
                 id.clone(),
                 linear_devs,
                 srd.stripe_sectors,
@@ -315,7 +315,7 @@ impl<'a> Froyo<'a> {
 
         let tpd = &froyo_save.thin_pool_dev;
 
-        let meta_name = format!("thin-meta-{}", froyo_save.name);
+        let meta_name = format!("thin-meta-{}", froyo_save.id);
         let mut raid_segments = Vec::new();
         for seg in &tpd.meta_dev.segments {
             let parent = try!(raid_devs.get(&seg.parent).ok_or_else(|| {
@@ -331,7 +331,7 @@ impl<'a> Froyo<'a> {
             &tpd.meta_dev.id,
             raid_segments));
 
-        let data_name = format!("thin-data-{}", froyo_save.name);
+        let data_name = format!("thin-data-{}", froyo_save.id);
         let mut raid_segments = Vec::new();
         for seg in &tpd.data_dev.segments {
             let parent = try!(raid_devs.get(&seg.parent).ok_or_else(|| {
@@ -349,7 +349,7 @@ impl<'a> Froyo<'a> {
 
         ThinPoolDev::create(
             &dm,
-            &froyo_save.name,
+            &froyo_save.id,
             tpd.data_block_size,
             tpd.low_water_blocks,
             meta_raid_dev,
@@ -370,7 +370,7 @@ impl<'a> Froyo<'a> {
         for std in &froyo_save.thin_devs {
             thin_devs.push(try!(ThinDev::create(
                 &dm,
-                &froyo_save.name,
+                &froyo_save.id,
                 std.thin_number,
                 std.size,
                 &thin_pool_dev)));
@@ -395,8 +395,6 @@ impl<'a> Froyo<'a> {
         name: &str,
         block_devs: &BTreeMap<String, BlockMember>)
         -> FroyoResult<Option<RaidDev>> {
-
-        // TODO: Make sure name has only chars we can use in a DM name
 
         // get common data area size, allowing for Froyo data at start and end
         let mut bd_areas: Vec<_> = block_devs.iter()
