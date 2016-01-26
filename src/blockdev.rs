@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use types::{Sectors, SectorOffset, FroyoResult};
 use consts::*;
-use util::{setup_dm_dev, blkdev_size};
+use util::{setup_dm_dev, blkdev_size, clear_dev};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MDA {
@@ -55,67 +55,7 @@ pub enum BlockMember {
 }
 
 impl BlockDev {
-    pub fn new(path: &Path) -> io::Result<BlockDev> {
-        let dev = try!(Device::from_str(&path.to_string_lossy()));
-
-        let mut f = match OpenOptions::new().read(true).open(path) {
-            Err(_) => {
-                return Err(io::Error::new(
-                    ErrorKind::PermissionDenied,
-                    format!("Could not open {}", path.display())));
-            },
-            Ok(x) => x,
-        };
-
-        let mut buf = [0u8; HEADER_SIZE as usize];
-        try!(f.read(&mut buf));
-
-        if &buf[4..20] != FRO_MAGIC {
-            return Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("{} is not a Froyo device", path.display())));
-        }
-
-        let crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
-        if crc != LittleEndian::read_u32(&buf[..4]) {
-            return Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("{} Froyo header CRC failed", path.display())));
-            // TODO: Try to read end-of-disk copy
-        }
-
-        let sectors = Sectors::new(try!(blkdev_size(&f)) / SECTOR_SIZE);
-
-        let id = from_utf8(&buf[32..64]).unwrap();
-        let froyodev_id = from_utf8(&buf[128..160]).unwrap();
-
-        Ok(BlockDev {
-            froyodev_id: froyodev_id.to_owned(),
-            id: id.to_owned(),
-            dev: dev,
-            path: path.to_owned(),
-            sectors: sectors,
-            mdaa: MDA {
-                last_updated: Timespec::new(
-                    LittleEndian::read_u64(&buf[64..72]) as i64,
-                    LittleEndian::read_u32(&buf[72..76]) as i32),
-                length: LittleEndian::read_u32(&buf[76..80]),
-                crc: LittleEndian::read_u32(&buf[80..84]),
-                offset: MDAA_ZONE_OFFSET,
-            },
-            mdab: MDA {
-                last_updated: Timespec::new(
-                    LittleEndian::read_u64(&buf[96..104]) as i64,
-                    LittleEndian::read_u32(&buf[104..108]) as i32),
-                length: LittleEndian::read_u32(&buf[108..112]),
-                crc: LittleEndian::read_u32(&buf[112..116]),
-                offset: MDAB_ZONE_OFFSET,
-            },
-            linear_devs: Vec::new(), // Not initialized until metadata is read
-        })
-    }
-
-    pub fn initialize(froyodev_id: &str, path: &Path, force: bool)
+    pub fn new(froyodev_id: &str, path: &Path, force: bool)
                       -> io::Result<BlockDev> {
         let pstat = match stat::stat(path) {
             Err(_) => return Err(io::Error::new(
@@ -189,6 +129,66 @@ impl BlockDev {
         Ok(bd)
     }
 
+    pub fn setup(path: &Path) -> io::Result<BlockDev> {
+        let dev = try!(Device::from_str(&path.to_string_lossy()));
+
+        let mut f = match OpenOptions::new().read(true).open(path) {
+            Err(_) => {
+                return Err(io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    format!("Could not open {}", path.display())));
+            },
+            Ok(x) => x,
+        };
+
+        let mut buf = [0u8; HEADER_SIZE as usize];
+        try!(f.read(&mut buf));
+
+        if &buf[4..20] != FRO_MAGIC {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} is not a Froyo device", path.display())));
+        }
+
+        let crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
+        if crc != LittleEndian::read_u32(&buf[..4]) {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("{} Froyo header CRC failed", path.display())));
+            // TODO: Try to read end-of-disk copy
+        }
+
+        let sectors = Sectors::new(try!(blkdev_size(&f)) / SECTOR_SIZE);
+
+        let id = from_utf8(&buf[32..64]).unwrap();
+        let froyodev_id = from_utf8(&buf[128..160]).unwrap();
+
+        Ok(BlockDev {
+            froyodev_id: froyodev_id.to_owned(),
+            id: id.to_owned(),
+            dev: dev,
+            path: path.to_owned(),
+            sectors: sectors,
+            mdaa: MDA {
+                last_updated: Timespec::new(
+                    LittleEndian::read_u64(&buf[64..72]) as i64,
+                    LittleEndian::read_u32(&buf[72..76]) as i32),
+                length: LittleEndian::read_u32(&buf[76..80]),
+                crc: LittleEndian::read_u32(&buf[80..84]),
+                offset: MDAA_ZONE_OFFSET,
+            },
+            mdab: MDA {
+                last_updated: Timespec::new(
+                    LittleEndian::read_u64(&buf[96..104]) as i64,
+                    LittleEndian::read_u32(&buf[104..108]) as i32),
+                length: LittleEndian::read_u32(&buf[108..112]),
+                crc: LittleEndian::read_u32(&buf[112..116]),
+                offset: MDAB_ZONE_OFFSET,
+            },
+            linear_devs: Vec::new(), // Not initialized until metadata is read
+        })
+    }
+
     pub fn to_save(&self) -> BlockDevSave {
         BlockDevSave {
             path: self.path.clone(),
@@ -201,7 +201,7 @@ impl BlockDev {
            .into_iter()
            .filter_map(|dir_e| if dir_e.is_ok()
                        { Some(dir_e.unwrap().path()) } else { None } )
-           .filter_map(|path| { BlockDev::new(&path).ok() })
+           .filter_map(|path| { BlockDev::setup(&path).ok() })
            .collect::<Vec<_>>())
     }
 
@@ -375,7 +375,20 @@ pub struct LinearDev {
 }
 
 impl LinearDev {
-    pub fn create(
+    pub fn new(
+        dm: &DM,
+        name: &str,
+        blockdev: &Rc<RefCell<BlockDev>>,
+        meta_segments: &[LinearSegment],
+        data_segments: &[LinearSegment])
+        -> io::Result<LinearDev> {
+
+        let ld = try!(Self::setup(dm, name, blockdev, meta_segments, data_segments));
+        try!(clear_dev(ld.meta_dev));
+        Ok(ld)
+    }
+
+    pub fn setup(
         dm: &DM,
         name: &str,
         blockdev: &Rc<RefCell<BlockDev>>,

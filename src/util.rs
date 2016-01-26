@@ -51,7 +51,7 @@ pub fn setup_dm_dev<T1, T2>(dm: &DM, name: &str, targets: &[(u64, u64, T1, T2)])
     Ok(di.device())
 }
 
-pub fn clear_dev(dev: &Device) -> io::Result<()> {
+pub fn clear_dev(dev: Device) -> io::Result<()> {
     let pathbuf = dev.path().unwrap();
 
     let mut f = match OpenOptions::new().write(true).open(&pathbuf) {

@@ -72,9 +72,9 @@ impl RaidMember {
 }
 
 impl RaidDev {
-    pub fn create(dm: &DM, name: &str, id: String, devs: Vec<RaidMember>,
-                  stripe: Sectors, region: Sectors)
-                  -> io::Result<RaidDev> {
+    pub fn setup(dm: &DM, name: &str, id: String, devs: Vec<RaidMember>,
+                 stripe: Sectors, region: Sectors)
+                 -> io::Result<RaidDev> {
         let raid_texts: Vec<_> = devs.iter()
             .map(|dev|
                  match *dev {
@@ -342,7 +342,13 @@ impl RaidLinearDev {
         table
     }
 
-    pub fn create(dm: &DM, name: &str, id: &str,
+    pub fn new(dm: &DM, name: &str, id: &str,
+               segments: Vec<RaidSegment>)
+               -> io::Result<RaidLinearDev> {
+        Self::setup(dm, name, id, segments)
+    }
+
+    pub fn setup(dm: &DM, name: &str, id: &str,
                   segments: Vec<RaidSegment>)
               -> io::Result<RaidLinearDev> {
 

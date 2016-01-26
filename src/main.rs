@@ -123,7 +123,7 @@ fn create(args: &ArgMatches) -> FroyoResult<()> {
         .collect();
     let force = args.is_present("force");
 
-    let froyo = try!(Froyo::create(name, &dev_paths, force));
+    let froyo = try!(Froyo::new(name, &dev_paths, force));
 
     try!(froyo.save_state());
 

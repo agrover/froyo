@@ -66,17 +66,17 @@ impl ThinPoolDev {
                -> FroyoResult<ThinPoolDev> {
         // meta
         let meta_name = format!("thin-meta-{}", name);
-        let meta_raid_dev = try!(RaidLinearDev::create(
+        let meta_raid_dev = try!(RaidLinearDev::new(
             dm,
             &meta_name,
             &Uuid::new_v4().to_simple_string(),
             meta_segs));
 
-        try!(clear_dev(&meta_raid_dev.dev));
+        try!(clear_dev(meta_raid_dev.dev));
 
         // data
         let data_name = format!("thin-data-{}", name);
-        let data_raid_dev = try!(RaidLinearDev::create(
+        let data_raid_dev = try!(RaidLinearDev::new(
             dm,
             &data_name,
             &Uuid::new_v4().to_simple_string(),
@@ -85,7 +85,7 @@ impl ThinPoolDev {
         let data_block_size = Sectors::new(2048); // 1MiB
         let low_water_blocks = DataBlocks::new(512); // 512MiB
 
-        ThinPoolDev::create(
+        ThinPoolDev::setup(
             dm,
             name,
             data_block_size,
@@ -94,7 +94,7 @@ impl ThinPoolDev {
             data_raid_dev)
     }
 
-    pub fn create(
+    pub fn setup(
         dm: &DM,
         name: &str,
         data_block_size: Sectors,
@@ -266,7 +266,7 @@ impl ThinDev {
         try!(dm.target_msg(&DevId::Name(&pool_dev.dm_name),
                            0, &format!("create_thin {}", thin_number)));
 
-        let mut td = try!(ThinDev::create(
+        let mut td = try!(ThinDev::setup(
             dm,
             name,
             thin_number,
@@ -279,7 +279,7 @@ impl ThinDev {
         Ok(td)
     }
 
-    pub fn create(
+    pub fn setup(
         dm: &DM,
         name: &str,
         thin_number: u32,

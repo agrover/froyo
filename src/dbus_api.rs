@@ -86,7 +86,7 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                                   .map_err(|_| MethodErr::invalid_arg(&i))
                                   .map(|i| i.to_owned())));
 
-        let froyo = match Froyo::create(&name, &blockdevs, force) {
+        let froyo = match Froyo::new(&name, &blockdevs, force) {
             Ok(x) => x,
             Err(_) => return Err(MethodErr::failed(&"Froyo create failed")),
         };

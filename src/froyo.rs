@@ -24,7 +24,7 @@ use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus};
 use thin::{ThinDev, ThinDevSave, ThinStatus};
 use types::{Sectors, SectorOffset, DataBlocks, FroyoError, FroyoResult};
 use dbus_api::DbusContext;
-use util::{align_to, clear_dev};
+use util::align_to;
 use consts::*;
 
 
@@ -66,14 +66,14 @@ pub enum FroyoRunningStatus {
 }
 
 impl<'a> Froyo<'a> {
-    pub fn create<T>(name: &str, paths: &[T], force: bool)
+    pub fn new<T>(name: &str, paths: &[T], force: bool)
                      -> FroyoResult<Froyo<'a>>
         where T: Borrow<Path>
     {
         let id = Uuid::new_v4().to_simple_string();
         let mut block_devs = BTreeMap::new();
         for path in paths {
-            let bd = try!(BlockDev::initialize(&id, path.borrow(), force));
+            let bd = try!(BlockDev::new(&id, path.borrow(), force));
             block_devs.insert(bd.id.clone(),
                               BlockMember::Present(Rc::new(RefCell::new(bd))));
         }
@@ -196,7 +196,7 @@ impl<'a> Froyo<'a> {
 
             let froyo_save = try!(serde_json::from_str::<FroyoSave>(&s));
 
-            froyos.push(try!(Froyo::from_save(froyo_save, froyo_id, bds)));
+            froyos.push(try!(Froyo::setup(froyo_save, froyo_id, bds)));
         }
 
         Ok(froyos)
@@ -213,7 +213,7 @@ impl<'a> Froyo<'a> {
         Ok(None)
     }
 
-    fn from_save_blockdevs(
+    fn setup_blockdevs(
         froyo_save: &FroyoSave,
         found_block_devs: Vec<BlockDev>)
         -> FroyoResult<BTreeMap<String, BlockMember>> {
@@ -257,7 +257,7 @@ impl<'a> Froyo<'a> {
         Ok(block_devs)
     }
 
-    fn from_save_raiddevs(
+    fn setup_raiddevs(
         froyo_save: &FroyoSave,
         block_devs: &BTreeMap<String, BlockMember>)
         -> FroyoResult<BTreeMap<String, Rc<RefCell<RaidDev>>>> {
@@ -271,7 +271,7 @@ impl<'a> Froyo<'a> {
                     Some(bd) => {
                         match *bd {
                             BlockMember::Present(ref bd) => {
-                                let ld = Rc::new(RefCell::new(try!(LinearDev::create(
+                                let ld = Rc::new(RefCell::new(try!(LinearDev::setup(
                                     &dm, &format!("{}-{}-{}", froyo_save.id, id, m_num),
                                     &bd, &sld.meta_segments, &sld.data_segments))));
                                 bd.borrow_mut().linear_devs.push(ld.clone());
@@ -294,7 +294,7 @@ impl<'a> Froyo<'a> {
             }
 
             // TODO: handle when devs is less than what's in srd
-            let rd = Rc::new(RefCell::new(try!(RaidDev::create(
+            let rd = Rc::new(RefCell::new(try!(RaidDev::setup(
                 &dm,
                 &froyo_save.id,
                 id.clone(),
@@ -308,7 +308,7 @@ impl<'a> Froyo<'a> {
         Ok(raid_devs)
     }
 
-    fn from_save_thinpool(
+    fn setup_thinpool(
         froyo_save: &FroyoSave,
         raid_devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
         -> FroyoResult<ThinPoolDev> {
@@ -326,7 +326,7 @@ impl<'a> Froyo<'a> {
                 RaidSegment::new(seg.start, seg.length, parent));
         }
 
-        let meta_raid_dev = try!(RaidLinearDev::create(
+        let meta_raid_dev = try!(RaidLinearDev::setup(
             &dm,
             &meta_name,
             &tpd.meta_dev.id,
@@ -342,13 +342,13 @@ impl<'a> Froyo<'a> {
                 RaidSegment::new(seg.start, seg.length, parent));
         }
 
-        let data_raid_dev = try!(RaidLinearDev::create(
+        let data_raid_dev = try!(RaidLinearDev::setup(
             &dm,
             &data_name,
             &tpd.data_dev.id,
             raid_segments));
 
-        ThinPoolDev::create(
+        ThinPoolDev::setup(
             &dm,
             &froyo_save.id,
             tpd.data_block_size,
@@ -357,19 +357,19 @@ impl<'a> Froyo<'a> {
             data_raid_dev)
     }
 
-    fn from_save(froyo_save: FroyoSave, froyo_id: String, found_blockdevs: Vec<BlockDev>)
+    fn setup(froyo_save: FroyoSave, froyo_id: String, found_blockdevs: Vec<BlockDev>)
                  -> FroyoResult<Froyo<'a>> {
-        let block_devs = try!(Froyo::from_save_blockdevs(&froyo_save, found_blockdevs));
+        let block_devs = try!(Froyo::setup_blockdevs(&froyo_save, found_blockdevs));
 
-        let raid_devs = try!(Froyo::from_save_raiddevs(&froyo_save, &block_devs));
+        let raid_devs = try!(Froyo::setup_raiddevs(&froyo_save, &block_devs));
 
-        let thin_pool_dev = try!(Froyo::from_save_thinpool(&froyo_save, &raid_devs));
+        let thin_pool_dev = try!(Froyo::setup_thinpool(&froyo_save, &raid_devs));
 
         let dm = try!(DM::new());
 
         let mut thin_devs = Vec::new();
         for std in &froyo_save.thin_devs {
-            thin_devs.push(try!(ThinDev::create(
+            thin_devs.push(try!(ThinDev::setup(
                 &dm,
                 &froyo_save.id,
                 std.thin_number,
@@ -453,7 +453,7 @@ impl<'a> Froyo<'a> {
             let mdata_sector_start = sector_start;
             let data_sector_start = SectorOffset::new(*mdata_sector_start + *mdata_sectors);
 
-            let linear = Rc::new(RefCell::new(try!(LinearDev::create(
+            let linear = Rc::new(RefCell::new(try!(LinearDev::new(
                 &dm,
                 &format!("{}-{}-{}", name, raid_uuid, num),
                 bd,
@@ -466,13 +466,11 @@ impl<'a> Froyo<'a> {
                     length: data_sectors,
                 }]))));
 
-            try!(clear_dev(&RefCell::borrow(&linear).meta_dev));
-
             bd.borrow_mut().linear_devs.push(linear.clone());
             linear_devs.push(RaidMember::Present(linear));
         }
 
-        let raid = try!(RaidDev::create(
+        let raid = try!(RaidDev::setup(
             &dm,
             &name,
             raid_uuid,
@@ -654,7 +652,7 @@ impl<'a> Froyo<'a> {
     pub fn add_block_device<T: Borrow<Path>>(&mut self, path: T, force: bool)
                                              -> FroyoResult<()> {
 
-        let new_bd = try!(BlockDev::initialize(&self.id, path.borrow(), force));
+        let new_bd = try!(BlockDev::new(&self.id, path.borrow(), force));
         self.block_devs.insert(
             new_bd.id.clone(), BlockMember::Present(Rc::new(RefCell::new(new_bd))));
         try!(self.save_state());
