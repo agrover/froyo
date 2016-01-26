@@ -142,6 +142,7 @@ impl BlockDev {
         };
 
         let mut buf = [0u8; HEADER_SIZE as usize];
+        try!(f.seek(SeekFrom::Start(SECTOR_SIZE)));
         try!(f.read(&mut buf));
 
         if &buf[4..20] != FRO_MAGIC {
@@ -334,7 +335,7 @@ impl BlockDev {
 
         let mut f = try!(OpenOptions::new().write(true).open(&self.path));
 
-        try!(f.seek(SeekFrom::Start(0)));
+        try!(f.seek(SeekFrom::Start(SECTOR_SIZE)));
         try!(f.write_all(&buf));
         try!(f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64))));
         try!(f.write_all(&buf));

@@ -7,8 +7,9 @@ The zones are identical (lengths in 512-byte sectors):
 
 | offset | length | description
 |--------|--------|-------
-|0       |1       |signature block
-|1       |7       |unused
+|0       |1       |unused
+|1       |1       |signature block
+|2       |6       |unused
 |8       |1020    |metadata area A (MDAA)
 |1028    |1020    |metadata area B (MDAB)
 
