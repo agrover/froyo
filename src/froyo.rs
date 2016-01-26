@@ -658,7 +658,7 @@ impl<'a> Froyo<'a> {
         let new_bd = try!(BlockDev::initialize(&self.id, path.borrow(), force));
         self.block_devs.insert(
             new_bd.id.clone(), BlockMember::Present(Rc::new(RefCell::new(new_bd))));
-        self.save_state();
+        try!(self.save_state());
 
         // TODO: schedule a reshape?
 
