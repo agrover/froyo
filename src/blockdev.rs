@@ -18,7 +18,7 @@ use crc::crc32;
 use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
 
-use types::{Sectors, SectorOffset, FroyoResult};
+use types::{Sectors, SectorOffset, FroyoResult, FroyoError};
 use consts::*;
 use util::{setup_dm_dev, blkdev_size, clear_dev};
 
@@ -56,49 +56,38 @@ pub enum BlockMember {
 
 impl BlockDev {
     pub fn new(froyodev_id: &str, path: &Path, force: bool)
-                      -> io::Result<BlockDev> {
-        let pstat = match stat::stat(path) {
-            Err(_) => return Err(io::Error::new(
-                ErrorKind::NotFound,
-                format!("{} not found", path.display()))),
-            Ok(x) => x,
-        };
+                      -> FroyoResult<BlockDev> {
+        let pstat = try!(stat::stat(path));
 
         if pstat.st_mode & 0x6000 != 0x6000 {
-            return Err(io::Error::new(
+            return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} is not a block device", path.display())));
+                format!("{} is not a block device", path.display()))));
         }
 
-        let dev = match Device::from_str(&path.to_string_lossy()) {
-            Err(_) => return Err(io::Error::new(
-                ErrorKind::InvalidInput,
-                format!("{} is not a block device", path.display()))),
-            Ok(x) => x,
-        };
+        let dev = try!(Device::from_str(&path.to_string_lossy()));
 
-        let mut f = match OpenOptions::new().read(true).write(true).open(path) {
-            Err(_) => return Err(io::Error::new(
-                ErrorKind::PermissionDenied,
-                format!("Could not open {}", path.display()))),
-            Ok(x) => x,
-        };
+        // map_err so we can improve the error message
+        let mut f = try!(OpenOptions::new().read(true).open(path)
+                         .map_err(|_| io::Error::new(
+                             ErrorKind::PermissionDenied,
+                             format!("Could not open {}", path.display()))));
 
         if !force {
             let mut buf = [0u8; 4096];
             try!(f.read(&mut buf));
 
             if buf.iter().any(|x| *x != 0) {
-                return Err(io::Error::new(
+                return Err(FroyoError::Io(io::Error::new(
                     ErrorKind::InvalidInput,
                     format!("First 4K of {} is not zeroed, need to use --force",
-                            path.display())));
+                            path.display()))));
             }
         }
 
         let dev_size = try!(blkdev_size(&f));
         if dev_size < MIN_DEV_SIZE {
-            return Err(io::Error::new(
+            return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("{} too small, 1G minimum", path.display())));
         }
@@ -132,14 +121,11 @@ impl BlockDev {
     pub fn setup(path: &Path) -> io::Result<BlockDev> {
         let dev = try!(Device::from_str(&path.to_string_lossy()));
 
-        let mut f = match OpenOptions::new().read(true).open(path) {
-            Err(_) => {
-                return Err(io::Error::new(
-                    ErrorKind::PermissionDenied,
-                    format!("Could not open {}", path.display())));
-            },
-            Ok(x) => x,
-        };
+        // map_err so we can improve the error message
+        let mut f = try!(OpenOptions::new().read(true).open(path)
+                         .map_err(|_| io::Error::new(
+                             ErrorKind::PermissionDenied,
+                             format!("Could not open {}", path.display()))));
 
         let mut buf = [0u8; HEADER_SIZE as usize];
         try!(f.seek(SeekFrom::Start(SECTOR_SIZE)));
