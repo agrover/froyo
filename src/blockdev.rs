@@ -17,6 +17,7 @@ use devicemapper::{DM, Device};
 use crc::crc32;
 use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
+use bytesize::ByteSize;
 
 use types::{Sectors, SectorOffset, FroyoResult, FroyoError};
 use consts::*;
@@ -89,7 +90,8 @@ impl BlockDev {
         if dev_size < MIN_DEV_SIZE {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} too small, 1G minimum", path.display())));
+                format!("{} too small, {} minimum", path.display(),
+                        ByteSize::b(MIN_DEV_SIZE as usize).to_string(true)))));
         }
 
         let mut bd = BlockDev {
