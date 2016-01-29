@@ -55,6 +55,7 @@ use bytesize::ByteSize;
 use dbus::{Connection, BusType};
 
 use types::{DataBlocks, FroyoResult};
+use consts::SECTOR_SIZE;
 use froyo::{Froyo, FroyoStatus};
 
 
@@ -86,15 +87,15 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
                 FroyoStatus::ThinFailed => "Thin device failed",
             };
 
-            let space = try!(f.avail_redundant_space());
-            let total = f.total_redundant_space();
+            let space = *try!(f.avail_redundant_space()) * SECTOR_SIZE;
+            let total = *f.total_redundant_space() * SECTOR_SIZE;
 
-            let percent = (*(total-space) * 100) / *total;
+            let percent = ((total-space) * 100) / total;
 
-            println!("Status: {}, {}% used ({} of {} {} blocks free)",
+            println!("Status: {}, {}% used ({} of {} free)",
                      status, percent,
-                     *space, *total,
-                     ByteSize::b(f.data_block_size() as usize).to_string(true));
+                     ByteSize::b(space as usize).to_string(true),
+                     ByteSize::b(total as usize).to_string(true));
         },
         None => println!("Froyodev \"{}\" not found", name),
     }
