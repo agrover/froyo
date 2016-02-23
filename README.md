@@ -12,4 +12,10 @@ Drobo + Free + You = Froyo!
 
 ## Development notes
 
-Currently requires using Rust nightly compiler.
+Currently requires using [Rust nightly compiler](https://doc.rust-lang.org/book/nightly-rust.html).
+
+### Dev Resources
+
+IRC: `#froyo` on irc.freenode.org
+
+Mailing list: `froyo@lists.fedorahosted.org`
