@@ -171,7 +171,7 @@ impl<'a> Froyo<'a> {
         let mut froyo_devs = BTreeMap::new();
         for bd in try!(BlockDev::find_all()) {
             froyo_devs.entry(bd.froyodev_id.clone())
-                .or_insert(Vec::new())
+                .or_insert_with(Vec::new)
                 .push(bd);
         }
 
@@ -237,7 +237,7 @@ impl<'a> Froyo<'a> {
             }
         }
 
-        for (_, bd) in bd_map {
+        for bd in bd_map.values() {
             dbgp!("{} header indicates it's part of {} but \
                    not found in metadata, ignoring",
                   bd.path.display(), froyo_save.name);
@@ -457,11 +457,11 @@ impl<'a> Froyo<'a> {
                 &dm,
                 &format!("{}-{}-{}", name, raid_uuid, num),
                 bd,
-                &vec![LinearSegment {
+                &[LinearSegment {
                     start: mdata_sector_start,
                     length: mdata_sectors,
                 }],
-                &vec![LinearSegment {
+                &[LinearSegment {
                     start: data_sector_start,
                     length: data_sectors,
                 }]))));
@@ -485,7 +485,7 @@ impl<'a> Froyo<'a> {
         let metadata = try!(self.to_metadata());
         let current_time = time::now().to_timespec();
 
-        for (_, bd) in &self.block_devs {
+        for bd in self.block_devs.values() {
             if let BlockMember::Present(ref bd) = *bd {
                 try!(bd.borrow_mut().save_state(&current_time, metadata.as_bytes()))
             }
@@ -497,7 +497,7 @@ impl<'a> Froyo<'a> {
     pub fn status(&self)
                   -> FroyoResult<FroyoStatus> {
         let mut degraded = 0;
-        for (_, rd) in &self.raid_devs {
+        for rd in self.raid_devs.values() {
             let rd = RefCell::borrow(rd);
             let (r_status, _) = try!(rd.status());
             match r_status {
@@ -573,7 +573,7 @@ impl<'a> Froyo<'a> {
                          -> Option<Vec<RaidSegment>> {
         let mut needed = sectors;
         let mut segs = Vec::new();
-        for (_, rd) in raid_devs {
+        for rd in raid_devs.values() {
             if needed == Sectors::new(0) {
                 break
             }

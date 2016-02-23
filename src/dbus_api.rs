@@ -38,7 +38,7 @@ impl<'a> DbusContext<'a> {
     pub fn get_block_devices_msgitem(block_devs: &BTreeMap<String, BlockMember>)
                                      -> MessageItem {
         let mut msg_vec = Vec::new();
-        for (_, bd) in block_devs {
+        for bd in block_devs.values() {
             let (bd_path, bd_status) = match *bd {
                 BlockMember::Present(ref bd) =>
                 // TODO: in-use vs not-in-use

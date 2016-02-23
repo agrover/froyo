@@ -7,6 +7,9 @@
 #![plugin(serde_macros)]
 #![plugin(clippy)]
 
+#![allow(match_same_arms)] // we seem to have instances where same arms are good
+#![allow(dead_code)] // only temporary, until more stuff is filled in
+
 extern crate devicemapper;
 #[macro_use]
 extern crate clap;
