@@ -21,6 +21,7 @@ extern crate serde;
 extern crate serde_json;
 extern crate bytesize;
 extern crate dbus;
+extern crate term;
 
 #[macro_use] extern crate custom_derive;
 #[macro_use] extern crate newtype_derive;
@@ -110,7 +111,12 @@ fn add(_args: &ArgMatches) -> FroyoResult<()> {
 }
 
 fn remove(_args: &ArgMatches) -> FroyoResult<()> {
-    println!("hello from remove()");
+    let mut out = term::stdout().expect("could not get stdout");
+
+    try!(out.fg(term::color::GREEN));
+    try!(writeln!(out, "hello color"));
+    try!(out.reset());
+
     Ok(())
 }
 
