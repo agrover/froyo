@@ -3,7 +3,6 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use std::io;
-use std::error::Error;
 use std::process::Command;
 use std::fs;
 use std::path::PathBuf;

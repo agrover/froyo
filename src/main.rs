@@ -57,7 +57,7 @@ use clap::{App, Arg, SubCommand, ArgMatches};
 use bytesize::ByteSize;
 use dbus::{Connection, BusType};
 
-use types::{DataBlocks, FroyoResult};
+use types::FroyoResult;
 use consts::SECTOR_SIZE;
 use froyo::{Froyo, FroyoStatus};
 
