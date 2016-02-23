@@ -10,7 +10,6 @@ use std::path::Path;
 use std::cmp::Ordering;
 use std::io;
 use std::io::ErrorKind;
-use std::error::Error;
 
 use uuid::Uuid;
 use devicemapper::DM;

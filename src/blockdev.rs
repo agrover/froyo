@@ -120,7 +120,7 @@ impl BlockDev {
         Ok(bd)
     }
 
-    pub fn setup(path: &Path) -> io::Result<BlockDev> {
+    pub fn setup(path: &Path) -> FroyoResult<BlockDev> {
         let dev = try!(Device::from_str(&path.to_string_lossy()));
 
         // map_err so we can improve the error message
@@ -134,16 +134,16 @@ impl BlockDev {
         try!(f.read(&mut buf));
 
         if &buf[4..20] != FRO_MAGIC {
-            return Err(io::Error::new(
+            return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} is not a Froyo device", path.display())));
+                format!("{} is not a Froyo device", path.display()))));
         }
 
         let crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
         if crc != LittleEndian::read_u32(&buf[..4]) {
-            return Err(io::Error::new(
+            return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} Froyo header CRC failed", path.display())));
+                format!("{} Froyo header CRC failed", path.display()))));
             // TODO: Try to read end-of-disk copy
         }
 
@@ -370,7 +370,7 @@ impl LinearDev {
         blockdev: &Rc<RefCell<BlockDev>>,
         meta_segments: &[LinearSegment],
         data_segments: &[LinearSegment])
-        -> io::Result<LinearDev> {
+        -> FroyoResult<LinearDev> {
 
         let ld = try!(Self::setup(dm, name, blockdev, meta_segments, data_segments));
         try!(clear_dev(ld.meta_dev));

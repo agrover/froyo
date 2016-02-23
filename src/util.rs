@@ -9,9 +9,9 @@ use std::borrow::Borrow;
 use std::os::unix::prelude::AsRawFd;
 
 use devicemapper::{DM, Device, DmFlags, DevId};
-use nix::sys::ioctl;
 
 use consts::*;
+use types::{FroyoResult, FroyoError};
 
 pub fn align_to(num: u64, align_to: u64) -> u64 {
     let agn = align_to - 1;
@@ -19,13 +19,13 @@ pub fn align_to(num: u64, align_to: u64) -> u64 {
     (num + agn) & !agn
 }
 
-pub fn blkdev_size(file: &File) -> io::Result<u64> {
-    // BLKGETSIZE64
-    let op = ioctl::op_read(0x12, 114, 8);
+ioctl!(read blkgetsize64 with 0x12, 114; u64);
+
+pub fn blkdev_size(file: &File) -> FroyoResult<u64> {
     let mut val: u64 = 0;
 
-    match unsafe { ioctl::read_into(file.as_raw_fd(), op, &mut val) } {
-        Err(_) => Err((io::Error::last_os_error())),
+    match unsafe { blkgetsize64(file.as_raw_fd(), &mut val) } {
+        Err(x) => Err(FroyoError::Nix(x)),
         Ok(_) => Ok(val),
     }
 }
@@ -51,13 +51,13 @@ pub fn setup_dm_dev<T1, T2>(dm: &DM, name: &str, targets: &[(u64, u64, T1, T2)])
     Ok(di.device())
 }
 
-pub fn clear_dev(dev: Device) -> io::Result<()> {
+pub fn clear_dev(dev: Device) -> FroyoResult<()> {
     let pathbuf = dev.path().unwrap();
 
     let mut f = match OpenOptions::new().write(true).open(&pathbuf) {
-        Err(_) => return Err(io::Error::new(
+        Err(_) => return Err(FroyoError::Io(io::Error::new(
             ErrorKind::PermissionDenied,
-            format!("Could not open {}", pathbuf.display()))),
+            format!("Could not open {}", pathbuf.display())))),
         Ok(x) => x,
     };
 
@@ -69,4 +69,3 @@ pub fn clear_dev(dev: Device) -> io::Result<()> {
 
     Ok(())
 }
-

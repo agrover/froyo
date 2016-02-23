@@ -7,7 +7,7 @@ authors = ["Andy Grover <agrover@redhat.com>"]
 clippy = "*"
 devicemapper = "0.3.0"
 clap = "1"
-nix = "=0.3.9"
+nix = "0"
 crc = "1"
 byteorder = "0.3.13"
 uuid = "0.1.18"

@@ -11,9 +11,8 @@
 #![allow(dead_code)] // only temporary, until more stuff is filled in
 
 extern crate devicemapper;
-#[macro_use]
-extern crate clap;
-extern crate nix;
+#[macro_use] extern crate clap;
+#[macro_use] extern crate nix;
 extern crate crc;
 extern crate byteorder;
 extern crate uuid;
