@@ -59,12 +59,12 @@ pub enum ThinPoolWorkingStatus {
 
 impl ThinPoolDev {
     pub fn new(dm: &DM,
-               name: &str,
+               id: &str,
                meta_segs: Vec<RaidSegment>,
                data_segs: Vec<RaidSegment>)
                -> FroyoResult<ThinPoolDev> {
         // meta
-        let meta_name = format!("thin-meta-{}", name);
+        let meta_name = format!("thin-meta-{}", id);
         let meta_raid_dev = try!(RaidLinearDev::new(
             dm,
             &meta_name,
@@ -74,7 +74,7 @@ impl ThinPoolDev {
         try!(clear_dev(meta_raid_dev.dev));
 
         // data
-        let data_name = format!("thin-data-{}", name);
+        let data_name = format!("thin-data-{}", id);
         let data_raid_dev = try!(RaidLinearDev::new(
             dm,
             &data_name,
@@ -86,7 +86,7 @@ impl ThinPoolDev {
 
         ThinPoolDev::setup(
             dm,
-            name,
+            id,
             data_block_size,
             low_water_blocks,
             meta_raid_dev,
@@ -95,7 +95,7 @@ impl ThinPoolDev {
 
     pub fn setup(
         dm: &DM,
-        name: &str,
+        id: &str,
         data_block_size: Sectors,
         low_water_blocks: DataBlocks,
         meta_raid_dev: RaidLinearDev,
@@ -111,7 +111,7 @@ impl ThinPoolDev {
                              *low_water_blocks);
         let table = [(0u64, *data_raid_dev.length(), "thin-pool", &*params)];
 
-        let dm_name = format!("froyo-thin-pool-{}", name);
+        let dm_name = format!("froyo-thin-pool-{}", id);
         let pool_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         Ok(ThinPoolDev {
@@ -241,7 +241,7 @@ impl ThinPoolDev {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinDevSave {
-    pub vol_name: String,
+    pub name: String,
     pub thin_number: u32,
     pub size: Sectors,
 }
@@ -249,7 +249,7 @@ pub struct ThinDevSave {
 #[derive(Debug, Clone)]
 pub struct ThinDev {
     dev: Device,
-    vol_name: String,
+    name: String,
     thin_number: u32,
     pub size: Sectors,
     dm_name: String,
@@ -265,8 +265,8 @@ pub enum ThinStatus {
 impl ThinDev {
     pub fn new(
         dm: &DM,
+        froyo_id: &str,
         name: &str,
-        vol_name: &str,
         thin_number: u32,
         size: Sectors,
         pool_dev: &ThinPoolDev)
@@ -277,22 +277,22 @@ impl ThinDev {
 
         let mut td = try!(ThinDev::setup(
             dm,
+            froyo_id,
             name,
-            vol_name,
             thin_number,
             size,
             pool_dev));
 
         try!(td.create_devnode());
-        try!(td.create_fs(vol_name));
+        try!(td.create_fs(name));
 
         Ok(td)
     }
 
     pub fn setup(
         dm: &DM,
+        froyo_id: &str,
         name: &str,
-        vol_name: &str,
         thin_number: u32,
         size: Sectors,
         pool_dev: &ThinPoolDev)
@@ -302,12 +302,12 @@ impl ThinDev {
                              pool_dev.dev.minor, thin_number);
         let table = [(0u64, *size, "thin", &*params)];
 
-        let dm_name = format!("froyo-thin-{}-{}", name, thin_number);
+        let dm_name = format!("froyo-thin-{}-{}", froyo_id, thin_number);
         let thin_dev = try!(setup_dm_dev(dm, &dm_name, &table));
 
         Ok(ThinDev {
             dev: thin_dev,
-            vol_name: vol_name.to_owned(),
+            name: name.to_owned(),
             thin_number: thin_number,
             size: size,
             dm_name: dm_name,
@@ -343,7 +343,7 @@ impl ThinDev {
 
     pub fn to_save(&self) -> ThinDevSave {
         ThinDevSave {
-            vol_name: self.vol_name.clone(),
+            name: self.name.clone(),
             thin_number: self.thin_number,
             size: self.size,
         }
@@ -381,7 +381,7 @@ impl ThinDev {
             }
         }
 
-        pathbuf.push(&self.vol_name);
+        pathbuf.push(&self.name);
 
         let old_umask = umask(Mode::empty());
         let res = mknod(&pathbuf,
@@ -398,7 +398,7 @@ impl ThinDev {
 
     fn remove_devnode(&mut self) -> FroyoResult<()> {
         let mut pathbuf = PathBuf::from("/dev/froyo");
-        pathbuf.push(&self.vol_name);
+        pathbuf.push(&self.name);
         if let Err(_) = fs::remove_file(&pathbuf) {
             dbgp!("Could not remove device node {}", pathbuf.display());
         }

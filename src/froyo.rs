@@ -69,10 +69,10 @@ impl<'a> Froyo<'a> {
                      -> FroyoResult<Froyo<'a>>
         where T: Borrow<Path>
     {
-        let id = Uuid::new_v4().to_simple_string();
+        let froyo_id = Uuid::new_v4().to_simple_string();
         let mut block_devs = BTreeMap::new();
         for path in paths {
-            let bd = try!(BlockDev::new(&id, path.borrow(), force));
+            let bd = try!(BlockDev::new(&froyo_id, path.borrow(), force));
             block_devs.insert(bd.id.clone(),
                               BlockMember::Present(Rc::new(RefCell::new(bd))));
         }
@@ -92,7 +92,7 @@ impl<'a> Froyo<'a> {
 
         let mut raid_devs = BTreeMap::new();
         while let Some(rd) = try!(
-            Froyo::create_redundant_zone(&dm, &id, &block_devs)) {
+            Froyo::create_redundant_zone(&dm, &froyo_id, &block_devs)) {
             raid_devs.insert(rd.id.clone(), Rc::new(RefCell::new(rd)));
         }
 
@@ -108,21 +108,21 @@ impl<'a> Froyo<'a> {
             io::Error::new(io::ErrorKind::InvalidInput,
                            "no space for thinpool data")));
         let thin_pool_dev = try!(ThinPoolDev::new(
-            &dm, &id, meta_raid_segments, data_raid_segments));
+            &dm, &froyo_id, meta_raid_segments, data_raid_segments));
 
         let mut thin_devs = Vec::new();
         // Create an initial 1GB thin dev
         thin_devs.push(try!(ThinDev::new(
             &dm,
-            &id,
-            name,
+            &froyo_id,
+            name, // 1st thindev name same as froyodev name
             0,
             Sectors::new(1024 * 1024 * 1024 / SECTOR_SIZE),
             &thin_pool_dev)));
 
         Ok(Froyo {
             name: name.to_owned(),
-            id: id,
+            id: froyo_id,
             block_devs: block_devs,
             raid_devs: raid_devs,
             thin_pool_dev: thin_pool_dev,
@@ -371,7 +371,7 @@ impl<'a> Froyo<'a> {
             thin_devs.push(try!(ThinDev::setup(
                 &dm,
                 &froyo_save.id,
-                &std.vol_name,
+                &std.name,
                 std.thin_number,
                 std.size,
                 &thin_pool_dev)));
