@@ -51,6 +51,14 @@ pub fn setup_dm_dev<T1, T2>(dm: &DM, name: &str, targets: &[(u64, u64, T1, T2)])
     Ok(di.device())
 }
 
+pub fn teardown_dm_dev(dm: &DM, name: &str) -> FroyoResult<()> {
+    let id = &DevId::Name(name);
+
+    try!(dm.device_remove(id, DmFlags::empty()));
+
+    Ok(())
+}
+
 pub fn clear_dev(dev: Device) -> FroyoResult<()> {
     let pathbuf = dev.path().unwrap();
 

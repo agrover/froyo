@@ -21,7 +21,7 @@ use bytesize::ByteSize;
 
 use types::{Sectors, SectorOffset, FroyoResult, FroyoError};
 use consts::*;
-use util::{setup_dm_dev, blkdev_size, clear_dev};
+use util::{setup_dm_dev, blkdev_size, clear_dev, teardown_dm_dev};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MDA {
@@ -358,8 +358,10 @@ pub struct LinearDevSave {
 pub struct LinearDev {
     pub meta_dev: Device,
     meta_segments: Vec<LinearSegment>,
+    meta_dm_name: String,
     pub data_dev: Device,
     data_segments: Vec<LinearSegment>,
+    data_dm_name: String,
     parent: Rc<RefCell<BlockDev>>,
 }
 
@@ -397,8 +399,8 @@ impl LinearDev {
             offset = offset + SectorOffset::new(*seg.length);
         }
 
-        let dm_name = format!("froyo-linear-meta-{}", name);
-        let meta_dev = try!(setup_dm_dev(dm, &dm_name, &table));
+        let meta_dm_name = format!("froyo-linear-meta-{}", name);
+        let meta_dev = try!(setup_dm_dev(dm, &meta_dm_name, &table));
 
         // data
         let mut table = Vec::new();
@@ -410,16 +412,24 @@ impl LinearDev {
             offset = offset + SectorOffset::new(*seg.length);
         }
 
-        let dm_name = format!("froyo-linear-data-{}", name);
-        let data_dev = try!(setup_dm_dev(dm, &dm_name, &table));
+        let data_dm_name = format!("froyo-linear-data-{}", name);
+        let data_dev = try!(setup_dm_dev(dm, &data_dm_name, &table));
 
         Ok(LinearDev{
             meta_dev: meta_dev,
             meta_segments: meta_segments.to_vec(),
+            meta_dm_name: meta_dm_name,
             data_dev: data_dev,
             data_segments: data_segments.to_vec(),
+            data_dm_name: data_dm_name,
             parent: blockdev.clone(),
         })
+    }
+
+    pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
+        try!(teardown_dm_dev(dm, &self.meta_dm_name));
+        try!(teardown_dm_dev(dm, &self.data_dm_name));
+        Ok(())
     }
 
     pub fn to_save(&self) -> LinearDevSave {

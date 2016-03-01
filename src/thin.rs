@@ -13,7 +13,7 @@ use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_I
 
 use types::{Sectors, DataBlocks, FroyoError, FroyoResult};
 use raid::{RaidSegment, RaidLinearDev, RaidLinearDevSave};
-use util::{clear_dev, setup_dm_dev};
+use util::{clear_dev, setup_dm_dev, teardown_dm_dev};
 use consts::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +125,14 @@ impl ThinPoolDev {
         })
     }
 
+    pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
+        try!(teardown_dm_dev(dm, &self.dm_name));
+        try!(self.meta_dev.teardown(dm));
+        try!(self.data_dev.teardown(dm));
+
+        Ok(())
+    }
+
     pub fn to_save(&self) -> ThinPoolDevSave {
         ThinPoolDevSave {
             data_block_size: self.data_block_size,
@@ -231,8 +239,9 @@ impl ThinPoolDev {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinDevSave {
+    pub vol_name: String,
     pub thin_number: u32,
     pub size: Sectors,
 }
@@ -240,6 +249,7 @@ pub struct ThinDevSave {
 #[derive(Debug, Clone)]
 pub struct ThinDev {
     dev: Device,
+    vol_name: String,
     thin_number: u32,
     pub size: Sectors,
     dm_name: String,
@@ -268,11 +278,12 @@ impl ThinDev {
         let mut td = try!(ThinDev::setup(
             dm,
             name,
+            vol_name,
             thin_number,
             size,
             pool_dev));
 
-        try!(td.create_devnode(vol_name));
+        try!(td.create_devnode());
         try!(td.create_fs(vol_name));
 
         Ok(td)
@@ -281,6 +292,7 @@ impl ThinDev {
     pub fn setup(
         dm: &DM,
         name: &str,
+        vol_name: &str,
         thin_number: u32,
         size: Sectors,
         pool_dev: &ThinPoolDev)
@@ -295,11 +307,20 @@ impl ThinDev {
 
         Ok(ThinDev {
             dev: thin_dev,
+            vol_name: vol_name.to_owned(),
             thin_number: thin_number,
             size: size,
             dm_name: dm_name,
             params: params.clone(),
         })
+    }
+
+    pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
+        try!(self.remove_devnode());
+
+        try!(teardown_dm_dev(dm, &self.dm_name));
+
+        Ok(())
     }
 
     pub fn extend(&mut self, sectors: Sectors) -> FroyoResult<()> {
@@ -322,6 +343,7 @@ impl ThinDev {
 
     pub fn to_save(&self) -> ThinDevSave {
         ThinDevSave {
+            vol_name: self.vol_name.clone(),
             thin_number: self.thin_number,
             size: self.size,
         }
@@ -350,7 +372,7 @@ impl ThinDev {
             status_vals[0].parse::<u64>().unwrap())))
     }
 
-    fn create_devnode(&mut self, name: &str) -> FroyoResult<()> {
+    fn create_devnode(&mut self) -> FroyoResult<()> {
         let mut pathbuf = PathBuf::from("/dev/froyo");
 
         if let Err(e) = fs::create_dir(&pathbuf) {
@@ -359,7 +381,7 @@ impl ThinDev {
             }
         }
 
-        pathbuf.push(name);
+        pathbuf.push(&self.vol_name);
 
         let old_umask = umask(Mode::empty());
         let res = mknod(&pathbuf,
@@ -369,6 +391,16 @@ impl ThinDev {
         umask(old_umask);
         if let Err(e) = res {
             return Err(FroyoError::Nix(e))
+        }
+
+        Ok(())
+    }
+
+    fn remove_devnode(&mut self) -> FroyoResult<()> {
+        let mut pathbuf = PathBuf::from("/dev/froyo");
+        pathbuf.push(&self.vol_name);
+        if let Err(_) = fs::remove_file(&pathbuf) {
+            dbgp!("Could not remove device node {}", pathbuf.display());
         }
 
         Ok(())

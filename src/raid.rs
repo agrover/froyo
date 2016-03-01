@@ -15,7 +15,7 @@ use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
 use types::{Sectors, SectorOffset, FroyoError, FroyoResult};
 use blockdev::{LinearDev, LinearDevSave};
 use consts::*;
-use util::setup_dm_dev;
+use util::{setup_dm_dev, teardown_dm_dev};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaidDevSave {
@@ -134,6 +134,17 @@ impl RaidDev {
             members: devs,
             used: BTreeMap::new()
         })
+    }
+
+    pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
+        try!(teardown_dm_dev(dm, &self.dm_name));
+        for member in &self.members {
+            if let RaidMember::Present(ref linear) = *member {
+                try!(RefCell::borrow_mut(linear).teardown(dm))
+            }
+        }
+
+        Ok(())
     }
 
     pub fn to_save(&self) -> RaidDevSave {
@@ -362,6 +373,10 @@ impl RaidLinearDev {
             dev: linear_dev,
             segments: segments,
         })
+    }
+
+    pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
+        teardown_dm_dev(dm, &self.dm_name)
     }
 
     pub fn to_save(&self) -> RaidLinearDevSave {

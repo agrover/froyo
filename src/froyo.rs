@@ -371,6 +371,7 @@ impl<'a> Froyo<'a> {
             thin_devs.push(try!(ThinDev::setup(
                 &dm,
                 &froyo_save.id,
+                &std.vol_name,
                 std.thin_number,
                 std.size,
                 &thin_pool_dev)));
@@ -386,6 +387,22 @@ impl<'a> Froyo<'a> {
             throttled: false,
             dbus_context: None,
         })
+    }
+
+    pub fn teardown(&mut self) -> FroyoResult<()> {
+        let dm = try!(DM::new());
+
+        for thin in &mut self.thin_devs {
+            try!(thin.teardown(&dm))
+        }
+
+        try!(self.thin_pool_dev.teardown(&dm));
+
+        for raid in &mut self.raid_devs.values() {
+            try!(RefCell::borrow_mut(raid).teardown(&dm))
+        }
+
+        Ok(())
     }
 
     // Try to make an as-large-as-possible redundant device from the

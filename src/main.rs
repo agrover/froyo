@@ -170,6 +170,16 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
     Ok(())
 }
 
+fn teardown(args: &ArgMatches) -> FroyoResult<()> {
+    let name = args.value_of("froyodevname").unwrap();
+    match try!(Froyo::find(&name)) {
+        Some(mut f) => try!(f.teardown()),
+        None => println!("Froyodev \"{}\" not found", name),
+    }
+
+    Ok(())
+}
+
 fn main() {
 
     let matches = App::new("froyo")
@@ -254,6 +264,14 @@ fn main() {
                                      .index(1)
                                      )
                                 )
+                    .subcommand(SubCommand::with_name("teardown")
+                                .about("Remove the DM mappings for a froyodev")
+                                .arg(Arg::with_name("froyodevname")
+                                     .help("Name of the froyodev")
+                                     .required(true)
+                                     .index(1)
+                                     )
+                                )
                     .subcommand(SubCommand::with_name("dbus_server")
                                 .about("Serve the Froyo DBus API")
                                 )
@@ -274,6 +292,7 @@ fn main() {
         ("dev", Some(matches)) => match matches.subcommand() {
             ("dump_meta", Some(matches)) => dump_meta(matches),
             ("dbus_server", Some(matches)) => dbus_server(matches),
+            ("teardown", Some(matches)) => teardown(matches),
             ("", None) => {
                 println!("No command given, try \"help\"");
                 Ok(())
