@@ -43,7 +43,7 @@ impl serde::Serialize for Sectors {
     fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
         where S: serde::Serializer,
     {
-        serializer.visit_u64(**self)
+        serializer.serialize_u64(**self)
     }
 }
 
@@ -80,7 +80,7 @@ impl serde::Serialize for SectorOffset {
     fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
         where S: serde::Serializer,
     {
-        serializer.visit_u64(**self)
+        serializer.serialize_u64(**self)
     }
 }
 
@@ -118,7 +118,7 @@ impl serde::Serialize for DataBlocks {
     fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
         where S: serde::Serializer,
     {
-        serializer.visit_u64(**self)
+        serializer.serialize_u64(**self)
     }
 }
 
