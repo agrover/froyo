@@ -74,7 +74,7 @@ impl RaidMember {
 impl RaidDev {
     pub fn setup(dm: &DM, name: &str, id: String, devs: Vec<RaidMember>,
                  stripe: Sectors, region: Sectors)
-                 -> io::Result<RaidDev> {
+                 -> FroyoResult<RaidDev> {
         let raid_texts: Vec<_> = devs.iter()
             .map(|dev|
                  match *dev {
@@ -91,12 +91,12 @@ impl RaidDev {
 
         let present_devs = devs.iter().filter_map(|ref x| x.present()).count();
         if present_devs < (devs.len() - FROYO_REDUNDANCY) {
-            return Err(io::Error::new(
+            return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!(
                     "Too many missing devs to create raid: {}. Need at least {} of {}",
                     devs.len() - present_devs, devs.len() - FROYO_REDUNDANCY,
-                    devs.len())))
+                    devs.len()))))
         }
 
         let first_present_dev = devs.iter()
@@ -108,8 +108,8 @@ impl RaidDev {
         // Verify all present devs are the same length
         if !devs.iter().filter_map(|x| x.present()).all(
             |x| x.borrow().data_length() == first_present_dev_len) {
-            return Err(io::Error::new(
-                ErrorKind::InvalidInput, "RAID member device sizes differ"));
+            return Err(FroyoError::Io(io::Error::new(
+                ErrorKind::InvalidInput, "RAID member device sizes differ")))
         }
 
         let target_length = first_present_dev_len
@@ -344,13 +344,13 @@ impl RaidLinearDev {
 
     pub fn new(dm: &DM, name: &str, id: &str,
                segments: Vec<RaidSegment>)
-               -> io::Result<RaidLinearDev> {
+               -> FroyoResult<RaidLinearDev> {
         Self::setup(dm, name, id, segments)
     }
 
     pub fn setup(dm: &DM, name: &str, id: &str,
                   segments: Vec<RaidSegment>)
-              -> io::Result<RaidLinearDev> {
+              -> FroyoResult<RaidLinearDev> {
 
         let table = Self::dm_table(&segments);
         let dm_name = format!("froyo-raid-linear-{}", name);

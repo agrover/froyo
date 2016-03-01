@@ -239,7 +239,7 @@ impl BlockDev {
     }
 
     // Read metadata from newest MDA
-    pub fn read_mdax(&self) -> io::Result<Vec<u8>> {
+    pub fn read_mdax(&self) -> FroyoResult<Vec<u8>> {
         let younger_mda = match self.mdaa.last_updated.cmp(&self.mdab.last_updated) {
             Ordering::Less => &self.mdab,
             Ordering::Greater => &self.mdaa,
@@ -247,8 +247,8 @@ impl BlockDev {
         };
 
         if younger_mda.last_updated == Timespec::new(0,0) {
-            return Err(io::Error::new(
-                ErrorKind::InvalidInput, "Neither MDA region is in use"))
+            return Err(FroyoError::Io(io::Error::new(
+                ErrorKind::InvalidInput, "Neither MDA region is in use")))
         }
 
         let mut f = try!(OpenOptions::new().read(true).open(&self.path));
@@ -259,8 +259,8 @@ impl BlockDev {
         try!(f.read_exact(&mut buf));
 
         if younger_mda.crc != crc32::checksum_ieee(&buf) {
-            return Err(io::Error::new(
-                ErrorKind::InvalidInput, "Froyo MDA CRC failed"))
+            return Err(FroyoError::Io(io::Error::new(
+                ErrorKind::InvalidInput, "Froyo MDA CRC failed")))
             // TODO: Read backup copy
         }
 
@@ -268,7 +268,7 @@ impl BlockDev {
     }
 
     // Write metadata to least-recently-written MDA
-    fn write_mdax(&mut self, time: &Timespec, metadata: &[u8]) -> io::Result<()> {
+    fn write_mdax(&mut self, time: &Timespec, metadata: &[u8]) -> FroyoResult<()> {
         let older_mda = match self.mdaa.last_updated.cmp(&self.mdab.last_updated) {
             Ordering::Less => &mut self.mdaa,
             Ordering::Greater => &mut self.mdab,
@@ -276,9 +276,9 @@ impl BlockDev {
         };
 
         if metadata.len() as u64 > *MDAX_ZONE_SECTORS * SECTOR_SIZE {
-            return Err(io::Error::new(
+            return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("Metadata too large for MDA, {} bytes", metadata.len())))
+                format!("Metadata too large for MDA, {} bytes", metadata.len()))))
         }
 
         older_mda.crc = crc32::checksum_ieee(&metadata);
@@ -298,7 +298,7 @@ impl BlockDev {
         Ok(())
     }
 
-    fn write_mda_header(&mut self) -> io::Result<()> {
+    fn write_mda_header(&mut self) -> FroyoResult<()> {
         let mut buf = [0u8; HEADER_SIZE as usize];
         buf[4..20].clone_from_slice(FRO_MAGIC);
         LittleEndian::write_u64(&mut buf[20..28], *self.sectors);
@@ -332,7 +332,7 @@ impl BlockDev {
         Ok(())
     }
 
-    pub fn save_state(&mut self, time: &Timespec, metadata: &[u8]) -> io::Result<()> {
+    pub fn save_state(&mut self, time: &Timespec, metadata: &[u8]) -> FroyoResult<()> {
         try!(self.write_mdax(time, metadata));
         try!(self.write_mda_header());
 
@@ -383,7 +383,7 @@ impl LinearDev {
         blockdev: &Rc<RefCell<BlockDev>>,
         meta_segments: &[LinearSegment],
         data_segments: &[LinearSegment])
-        -> io::Result<LinearDev> {
+        -> FroyoResult<LinearDev> {
 
         let dev = RefCell::borrow(blockdev).dev;
 

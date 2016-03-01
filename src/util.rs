@@ -31,7 +31,7 @@ pub fn blkdev_size(file: &File) -> FroyoResult<u64> {
 }
 
 pub fn setup_dm_dev<T1, T2>(dm: &DM, name: &str, targets: &[(u64, u64, T1, T2)])
-                            -> io::Result<Device>
+                            -> FroyoResult<Device>
     where T1: Borrow<str>,
           T2: Borrow<str>,
 {
