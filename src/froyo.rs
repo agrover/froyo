@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::borrow::Borrow;
 use std::path::Path;
-use std::cmp::Ordering;
+use std::cmp::{Ordering, min};
 use std::io;
 use std::io::ErrorKind;
 
@@ -439,6 +439,9 @@ impl<'a> Froyo<'a> {
             .map(|&(_, (_, len))| len)
             .min()
             .unwrap();
+
+        // Limit each RAID size as well
+        let common_avail_sectors = min(common_avail_sectors, MAX_DATA_ZONE_SECTORS);
 
         let (region_count, region_sectors) = {
             let mut region_sectors = DEFAULT_REGION_SECTORS;

@@ -21,6 +21,11 @@ pub const STRIPE_SECTORS: Sectors = Sectors::new(2048);
 const MIN_DATA_ZONE_SIZE: u64 = (1024 * 1024 * 1024);
 pub const MIN_DATA_ZONE_SECTORS: Sectors = Sectors::new(MIN_DATA_ZONE_SIZE / SECTOR_SIZE);
 pub const MIN_DEV_SIZE: u64 = MIN_DATA_ZONE_SIZE + (2 * MDA_ZONE_SIZE);
+
+// But also no larger than 1 TiB
+const MAX_DATA_ZONE_SIZE: u64 = (1024 * 1024 * 1024 * 1024);
+pub const MAX_DATA_ZONE_SECTORS: Sectors = Sectors::new(MAX_DATA_ZONE_SIZE / SECTOR_SIZE);
+
 //const MIN_DEV_SECTORS: u64 = MIN_DEV_SIZE / SECTOR_SIZE;
 
 pub const MAX_REGIONS: u64 = (2 * 1024 * 1024);
