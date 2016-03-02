@@ -221,11 +221,13 @@ impl<'a> Froyo<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let mut block_devs = BTreeMap::new();
+        let mut present_devs = 0usize;
         for (id, sbd) in &froyo_save.block_devs {
             match bd_map.remove(id) {
                 Some(x) => {
                     block_devs.insert(
                         id.clone(), BlockMember::Present(Rc::new(RefCell::new(x))));
+                    present_devs += 1;
                 },
                 None => {
                     ::dbgp!("missing a blockdev: id {} path {}", id,
@@ -242,7 +244,7 @@ impl<'a> Froyo<'a> {
                   bd.path.display(), froyo_save.name);
         }
 
-        match froyo_save.block_devs.len() - block_devs.len() {
+        match froyo_save.block_devs.len() - present_devs {
             0 => dbgp!("All {} block devices found for {}",
                        block_devs.len(), froyo_save.name),
             num @ 1...FROYO_REDUNDANCY => dbgp!("Missing {} of {} drives from {}, can continue",
