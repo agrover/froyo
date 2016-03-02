@@ -141,6 +141,7 @@ impl BlockDev {
 
         let crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
         if crc != LittleEndian::read_u32(&buf[..4]) {
+            dbgp!("{} Froyo header CRC failed", path.display());
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("{} Froyo header CRC failed", path.display()))));
