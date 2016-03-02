@@ -321,12 +321,24 @@ impl BlockDev {
         let hdr_crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
         LittleEndian::write_u32(&mut buf[..4], hdr_crc);
 
-        let mut f = try!(OpenOptions::new().write(true).open(&self.path));
+        try!(BlockDev::write_hdr_buf(&self.path, &buf));
+
+        Ok(())
+    }
+
+    pub fn wipe_mda_header(&mut self) -> FroyoResult<()> {
+        let buf = [0u8; HEADER_SIZE as usize];
+        try!(BlockDev::write_hdr_buf(&self.path, &buf));
+        Ok(())
+    }
+
+    fn write_hdr_buf(path: &Path, buf: &[u8; HEADER_SIZE as usize]) -> FroyoResult<()> {
+        let mut f = try!(OpenOptions::new().write(true).open(path));
 
         try!(f.seek(SeekFrom::Start(SECTOR_SIZE)));
-        try!(f.write_all(&buf));
+        try!(f.write_all(buf));
         try!(f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64))));
-        try!(f.write_all(&buf));
+        try!(f.write_all(buf));
         try!(f.flush());
 
         Ok(())

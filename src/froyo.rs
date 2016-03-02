@@ -157,6 +157,20 @@ impl<'a> Froyo<'a> {
         }
     }
 
+    pub fn destroy(mut self) -> FroyoResult<()> {
+        try!(self.teardown());
+
+        for bd in self.block_devs.values() {
+            if let BlockMember::Present(ref bd) = *bd {
+                if let Err(e) = RefCell::borrow_mut(&*bd).wipe_mda_header() {
+                    dbgp!("Error when wiping header: {}", e.description());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn to_metadata(&self) -> FroyoResult<String> {
         Ok(try!(serde_json::to_string(&self.to_save())))
     }

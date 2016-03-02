@@ -144,14 +144,29 @@ fn create(args: &ArgMatches) -> FroyoResult<()> {
 fn rename(args: &ArgMatches) -> FroyoResult<()> {
     let old_name = args.value_of("froyodev_old_name").unwrap();
     let new_name = args.value_of("froyodev_new_name").unwrap();
-    println!("Rename {} to {}", old_name, new_name);
+
+    match try!(Froyo::find(&old_name)) {
+        Some(mut f) => {
+            f.name = new_name.to_owned();
+            try!(f.save_state());
+            dbgp!("Froyodev name {} changed to {}", old_name, new_name);
+        },
+        None => println!("Froyodev \"{}\" not found", old_name),
+    }
 
     Ok(())
 }
 
 fn destroy(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodev").unwrap();
-    println!("Destroy froyodev {}", name);
+
+    match try!(Froyo::find(&name)) {
+        Some(f) => {
+            try!(f.destroy());
+            dbgp!("Froyodev {} destroyed", name);
+        },
+        None => println!("Froyodev \"{}\" not found", name),
+    }
 
     Ok(())
 }
