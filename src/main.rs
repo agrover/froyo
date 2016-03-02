@@ -57,7 +57,7 @@ use clap::{App, Arg, SubCommand, ArgMatches};
 use bytesize::ByteSize;
 use dbus::{Connection, BusType};
 
-use types::FroyoResult;
+use types::{FroyoResult, FroyoError, InternalError};
 use consts::SECTOR_SIZE;
 use froyo::{Froyo, FroyoStatus};
 
@@ -105,8 +105,28 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
     Ok(())
 }
 
-fn add(_args: &ArgMatches) -> FroyoResult<()> {
-    println!("hello from add()");
+fn add(args: &ArgMatches) -> FroyoResult<()> {
+    let name = args.value_of("froyodevname").unwrap();
+    let dev_paths: Vec<_> = args.values_of("devices").unwrap().into_iter()
+        .map(|dev| {
+            if !Path::new(dev).is_absolute() {
+                PathBuf::from(format!("/dev/{}", dev))
+            } else {
+                PathBuf::from(dev)
+            }})
+        .collect();
+    let force = args.is_present("force");
+
+    let mut froyo = match try!(Froyo::find(&name)) {
+        Some(f) => f,
+        None => return Err(FroyoError::Froyo(InternalError(
+            format!("Froyodev \"{}\" not found", name)))),
+    };
+
+    for path in &dev_paths {
+        try!(froyo.add_blockdev(path, force))
+    }
+
     Ok(())
 }
 
@@ -239,6 +259,11 @@ fn main() {
                     )
         .subcommand(SubCommand::with_name("add")
                     .about("Add one or more additional block devices to a froyodev")
+                    .arg(Arg::with_name("force")
+                         .short("f")
+                         .long("force")
+                         .help("Force")
+                    )
                     .arg(Arg::with_name("froyodevname")
                          .help("Froyodev to add the device to")
                          .required(true)

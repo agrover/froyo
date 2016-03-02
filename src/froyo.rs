@@ -171,6 +171,14 @@ impl<'a> Froyo<'a> {
         Ok(())
     }
 
+    pub fn add_blockdev(&mut self, path: &Path, force: bool) -> FroyoResult<()> {
+        let bd = try!(BlockDev::new(&self.id, path, force));
+        self.block_devs.insert(
+            bd.id.clone(), BlockMember::Present(Rc::new(RefCell::new(bd))));
+        try!(self.save_state());
+        Ok(())
+    }
+
     pub fn to_metadata(&self) -> FroyoResult<String> {
         Ok(try!(serde_json::to_string(&self.to_save())))
     }
