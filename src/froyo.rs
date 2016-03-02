@@ -434,8 +434,8 @@ impl<'a> Froyo<'a> {
         -> FroyoResult<Option<RaidDev>> {
 
         // get common data area size, allowing for Froyo data at start and end
-        let mut bd_areas: Vec<_> = block_devs.iter()
-            .filter_map(|(_, bd)| {
+        let mut bd_areas: Vec<_> = block_devs.values()
+            .filter_map(|bd| {
                 if let BlockMember::Present(ref bd) = *bd {
                     Some(bd)
                 } else {
@@ -576,8 +576,7 @@ impl<'a> Froyo<'a> {
     //
     pub fn avail_redundant_space(&self) -> FroyoResult<Sectors> {
         let raid_avail = {
-            self.raid_devs.iter()
-                .map(|(_, rd)| rd)
+            self.raid_devs.values()
                 .map(|rd| RefCell::borrow(rd).avail_sectors())
                 .sum::<Sectors>()
         };
@@ -597,8 +596,7 @@ impl<'a> Froyo<'a> {
     }
 
     pub fn total_redundant_space(&self) -> Sectors {
-        self.raid_devs.iter()
-            .map(|(_, rd)| rd)
+        self.raid_devs.values()
             .map(|rd| RefCell::borrow(rd).length)
             .sum::<Sectors>()
     }
