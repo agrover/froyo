@@ -141,6 +141,21 @@ fn create(args: &ArgMatches) -> FroyoResult<()> {
     Ok(())
 }
 
+fn rename(args: &ArgMatches) -> FroyoResult<()> {
+    let old_name = args.value_of("froyodev_old_name").unwrap();
+    let new_name = args.value_of("froyodev_new_name").unwrap();
+    println!("Rename {} to {}", old_name, new_name);
+
+    Ok(())
+}
+
+fn destroy(args: &ArgMatches) -> FroyoResult<()> {
+    let name = args.value_of("froyodev").unwrap();
+    println!("Destroy froyodev {}", name);
+
+    Ok(())
+}
+
 fn dump_meta(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     match try!(Froyo::find(&name)) {
@@ -254,6 +269,27 @@ fn main() {
                          .index(2)
                          )
                     )
+        .subcommand(SubCommand::with_name("rename")
+                    .about("Rename a froyodev")
+                    .arg(Arg::with_name("froyodev_old_name")
+                         .help("Old name of froyodev")
+                         .required(true)
+                         .index(1)
+                    )
+                    .arg(Arg::with_name("froyodev_new_name")
+                         .help("New name of froyodev")
+                         .required(true)
+                         .index(2)
+                    )
+        )
+        .subcommand(SubCommand::with_name("destroy")
+                    .about("Destroy a froyodev")
+                    .arg(Arg::with_name("froyodev")
+                         .help("Froyodev to destroy")
+                         .required(true)
+                         .index(1)
+                    )
+        )
         .subcommand(SubCommand::with_name("dev")
                     .about("Developer/debug commands")
                     .subcommand(SubCommand::with_name("dump_meta")
@@ -289,6 +325,8 @@ fn main() {
         ("add", Some(matches)) => add(matches),
         ("remove", Some(matches)) => remove(matches),
         ("create", Some(matches)) => create(matches),
+        ("rename", Some(matches)) => rename(matches),
+        ("destroy", Some(matches)) => destroy(matches),
         ("dev", Some(matches)) => match matches.subcommand() {
             ("dump_meta", Some(matches)) => dump_meta(matches),
             ("dbus_server", Some(matches)) => dbus_server(matches),
