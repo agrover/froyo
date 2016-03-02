@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
 use uuid::Uuid;
 use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
+use nix::errno::EEXIST;
 
 use types::{Sectors, DataBlocks, FroyoError, FroyoResult};
 use raid::{RaidSegment, RaidLinearDev, RaidLinearDevSave};
@@ -283,7 +284,6 @@ impl ThinDev {
             size,
             pool_dev));
 
-        try!(td.create_devnode());
         try!(td.create_fs(name));
 
         Ok(td)
@@ -304,6 +304,8 @@ impl ThinDev {
 
         let dm_name = format!("froyo-thin-{}-{}", froyo_id, thin_number);
         let thin_dev = try!(setup_dm_dev(dm, &dm_name, &table));
+
+        try!(ThinDev::create_devnode(name, thin_dev));
 
         Ok(ThinDev {
             dev: thin_dev,
@@ -372,7 +374,7 @@ impl ThinDev {
             status_vals[0].parse::<u64>().unwrap())))
     }
 
-    fn create_devnode(&mut self) -> FroyoResult<()> {
+    fn create_devnode(name: &str, dev: Device) -> FroyoResult<()> {
         let mut pathbuf = PathBuf::from("/dev/froyo");
 
         if let Err(e) = fs::create_dir(&pathbuf) {
@@ -381,16 +383,18 @@ impl ThinDev {
             }
         }
 
-        pathbuf.push(&self.name);
+        pathbuf.push(name);
 
         let old_umask = umask(Mode::empty());
         let res = mknod(&pathbuf,
                     S_IFBLK,
                     S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP,
-                    self.dev.into());
+                    dev.into());
         umask(old_umask);
         if let Err(e) = res {
-            return Err(FroyoError::Nix(e))
+            if e.errno() != EEXIST {
+                return Err(FroyoError::Nix(e))
+            }
         }
 
         Ok(())
@@ -399,9 +403,7 @@ impl ThinDev {
     fn remove_devnode(&mut self) -> FroyoResult<()> {
         let mut pathbuf = PathBuf::from("/dev/froyo");
         pathbuf.push(&self.name);
-        if let Err(_) = fs::remove_file(&pathbuf) {
-            dbgp!("Could not remove device node {}", pathbuf.display());
-        }
+        try!(fs::remove_file(&pathbuf));
 
         Ok(())
     }
