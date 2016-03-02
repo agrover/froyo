@@ -131,10 +131,29 @@ impl serde::Deserialize for DataBlocks {
     }
 }
 
+//
+// An error type for errors generated within Froyo
+//
+#[derive(Debug, Clone)]
+pub struct InternalError(pub String);
+
+impl fmt::Display for InternalError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for InternalError {
+    fn description(&self) -> &str {
+        &self.0
+    }
+}
+
 // Define a common error enum.
 // See http://blog.burntsushi.net/rust-error-handling/
 #[derive(Debug)]
 pub enum FroyoError {
+    Froyo(InternalError),
     Io(io::Error),
     Serde(serde_json::error::Error),
     Nix(nix::Error),
@@ -145,6 +164,7 @@ pub enum FroyoError {
 impl fmt::Display for FroyoError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            FroyoError::Froyo(ref err) => write!(f, "Froyo error: {}", err.0),
             FroyoError::Io(ref err) => write!(f, "IO error: {}", err),
             FroyoError::Serde(ref err) => write!(f, "Serde error: {}", err),
             FroyoError::Nix(ref err) => write!(f, "Nix error: {}", err.errno().desc()),
@@ -157,6 +177,7 @@ impl fmt::Display for FroyoError {
 impl Error for FroyoError {
     fn description(&self) -> &str {
         match *self {
+            FroyoError::Froyo(ref err) => &err.0,
             FroyoError::Io(ref err) => err.description(),
             FroyoError::Serde(ref err) => Error::description(err),
             FroyoError::Nix(ref err) => err.errno().desc(),
@@ -167,12 +188,19 @@ impl Error for FroyoError {
 
     fn cause(&self) -> Option<&Error> {
         match *self {
+            FroyoError::Froyo(ref err) => Some(err),
             FroyoError::Io(ref err) => Some(err),
             FroyoError::Serde(ref err) => Some(err),
             FroyoError::Nix(ref err) => Some(err),
             FroyoError::Dbus(()) => None,
             FroyoError::Term(ref err) => Some(err),
         }
+    }
+}
+
+impl From<InternalError> for FroyoError {
+    fn from(err: InternalError) -> FroyoError {
+        FroyoError::Froyo(err)
     }
 }
 
