@@ -10,6 +10,7 @@ use std::path::Path;
 use std::cmp::{Ordering, min};
 use std::io;
 use std::io::ErrorKind;
+use std::error::Error;
 
 use uuid::Uuid;
 use devicemapper::DM;
@@ -195,7 +196,10 @@ impl<'a> Froyo<'a> {
 
             let froyo_save = try!(serde_json::from_str::<FroyoSave>(&s));
 
-            froyos.push(try!(Froyo::setup(froyo_save, froyo_id, bds)));
+            match Froyo::setup(&froyo_save, froyo_id, bds) {
+                Ok(f) => froyos.push(f),
+                Err(e) => dbgp!("Error: {}", e.description()),
+            }
         }
 
         Ok(froyos)
@@ -358,7 +362,7 @@ impl<'a> Froyo<'a> {
             data_raid_dev)
     }
 
-    fn setup(froyo_save: FroyoSave, froyo_id: String, found_blockdevs: Vec<BlockDev>)
+    fn setup(froyo_save: &FroyoSave, froyo_id: String, found_blockdevs: Vec<BlockDev>)
                  -> FroyoResult<Froyo<'a>> {
         let block_devs = try!(Froyo::setup_blockdevs(&froyo_save, found_blockdevs));
 
