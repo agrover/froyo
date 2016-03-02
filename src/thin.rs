@@ -12,7 +12,7 @@ use uuid::Uuid;
 use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
 use nix::errno::EEXIST;
 
-use types::{Sectors, DataBlocks, FroyoError, FroyoResult};
+use types::{Sectors, DataBlocks, FroyoError, FroyoResult, InternalError};
 use raid::{RaidSegment, RaidLinearDev, RaidLinearDevSave};
 use util::{clear_dev, setup_dm_dev, teardown_dm_dev};
 use consts::*;
@@ -418,7 +418,9 @@ impl ThinDev {
         if output.status.success(){
             dbgp!("Created xfs filesystem on {}", dev_name)
         } else {
-            println!("err {}", String::from_utf8_lossy(&output.stderr));
+            return Err(FroyoError::Froyo(InternalError(
+                format!("XFS mkfs error: {}",
+                        String::from_utf8_lossy(&output.stderr)))))
         }
         Ok(())
     }

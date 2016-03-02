@@ -100,7 +100,8 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
                      ByteSize::b(space as usize).to_string(true),
                      ByteSize::b(total as usize).to_string(true));
         },
-        None => println!("Froyodev \"{}\" not found", name),
+        None => return Err(FroyoError::Froyo(InternalError(
+            format!("Froyodev \"{}\" not found", name)))),
     }
     Ok(())
 }
@@ -171,7 +172,8 @@ fn rename(args: &ArgMatches) -> FroyoResult<()> {
             try!(f.save_state());
             dbgp!("Froyodev name {} changed to {}", old_name, new_name);
         },
-        None => println!("Froyodev \"{}\" not found", old_name),
+        None => return Err(FroyoError::Froyo(InternalError(
+            format!("Froyodev \"{}\" not found", old_name)))),
     }
 
     Ok(())
@@ -185,7 +187,8 @@ fn destroy(args: &ArgMatches) -> FroyoResult<()> {
             try!(f.destroy());
             dbgp!("Froyodev {} destroyed", name);
         },
-        None => println!("Froyodev \"{}\" not found", name),
+        None => return Err(FroyoError::Froyo(InternalError(
+            format!("Froyodev \"{}\" not found", name)))),
     }
 
     Ok(())
@@ -196,7 +199,8 @@ fn dump_meta(args: &ArgMatches) -> FroyoResult<()> {
     match try!(Froyo::find(&name)) {
         Some(f) =>
             println!("{}", try!(f.to_metadata_pretty())),
-        None => println!("Froyodev \"{}\" not found", name),
+        None => return Err(FroyoError::Froyo(InternalError(
+            format!("Froyodev \"{}\" not found", name)))),
     }
 
     Ok(())
@@ -224,9 +228,19 @@ fn teardown(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     match try!(Froyo::find(&name)) {
         Some(mut f) => try!(f.teardown()),
-        None => println!("Froyodev \"{}\" not found", name),
+        None => return Err(FroyoError::Froyo(InternalError(
+            format!("Froyodev \"{}\" not found", name)))),
     }
 
+    Ok(())
+}
+
+fn write_err(err: FroyoError) -> FroyoResult<()> {
+    let mut out = term::stderr().expect("could not get stderr");
+
+    try!(out.fg(term::color::RED));
+    try!(writeln!(out, "{}", err.description()));
+    try!(out.reset());
     Ok(())
 }
 
@@ -385,9 +399,10 @@ fn main() {
     };
 
     if let Err(r) = r {
-        if let Err(e) = writeln!(&mut ::std::io::stderr(), "{}", r.description()) {
+        if let Err(e) = write_err(r) {
             panic!("Unable to write to stderr: {}", e)
         }
+
         exit(1);
     }
 }
