@@ -191,7 +191,7 @@ impl BlockDev {
            .into_iter()
            .filter_map(|dir_e| if dir_e.is_ok()
                        { Some(dir_e.unwrap().path()) } else { None } )
-           .filter_map(|path| { BlockDev::setup(&path).ok() })
+           .filter_map(|path| BlockDev::setup(&path).ok())
            .collect::<Vec<_>>())
     }
 
