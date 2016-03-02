@@ -169,7 +169,7 @@ impl Error for FroyoError {
         match *self {
             FroyoError::Io(ref err) => Some(err),
             FroyoError::Serde(ref err) => Some(err),
-            FroyoError::Nix(_) => None,
+            FroyoError::Nix(ref err) => Some(err),
             FroyoError::Dbus(()) => None,
             FroyoError::Term(ref err) => Some(err),
         }
