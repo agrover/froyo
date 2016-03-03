@@ -125,18 +125,32 @@ fn add(args: &ArgMatches) -> FroyoResult<()> {
     };
 
     for path in &dev_paths {
-        try!(froyo.add_blockdev(path, force))
+        try!(froyo.add_block_device(path, force))
     }
+    try!(froyo.save_state());
 
     Ok(())
 }
 
-fn remove(_args: &ArgMatches) -> FroyoResult<()> {
-    let mut out = term::stdout().expect("could not get stdout");
+fn remove(args: &ArgMatches) -> FroyoResult<()> {
+    let name = args.value_of("froyodevname").unwrap();
+    let bd_path = {
+        let dev = args.value_of("blockdev").unwrap();
+        if !Path::new(dev).is_absolute() {
+            PathBuf::from(format!("/dev/{}", dev))
+        } else {
+            PathBuf::from(dev)
+        }
+    };
 
-    try!(out.fg(term::color::GREEN));
-    try!(writeln!(out, "hello color"));
-    try!(out.reset());
+    let mut froyo = match try!(Froyo::find(&name)) {
+        Some(f) => f,
+        None => return Err(FroyoError::Froyo(InternalError(
+            format!("Froyodev \"{}\" not found", name)))),
+    };
+
+    try!(froyo.remove_block_device(&bd_path));
+    try!(froyo.save_state());
 
     Ok(())
 }
@@ -297,9 +311,8 @@ fn main() {
                          .required(true)
                          .index(1)
                          )
-                    .arg(Arg::with_name("devices")
-                         .help("Block device(s) to remove")
-                         .multiple(true)
+                    .arg(Arg::with_name("blockdev")
+                         .help("Block device to remove")
                          .required(true)
                          .index(2)
                          )
