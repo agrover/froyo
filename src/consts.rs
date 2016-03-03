@@ -5,6 +5,11 @@
 use types::{Sectors, SectorOffset};
 
 pub const FROYO_REDUNDANCY: usize = 1;
+pub const MIN_BLK_DEVS: usize = 2;
+
+// Before increasing, either check if md-raid is good for wider, or
+// change zone creation to limit width
+pub const MAX_BLK_DEVS: usize = 8;
 
 pub const SECTOR_SIZE: u64 = 512;
 pub const HEADER_SIZE: u64 = 512;

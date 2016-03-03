@@ -70,12 +70,12 @@ impl<'a> Froyo<'a> {
                      -> FroyoResult<Froyo<'a>>
         where T: Borrow<Path>
     {
-        if paths.len() < 2 {
+        if paths.len() < MIN_BLK_DEVS {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput, "At least 2 block devices must be given")))
         }
 
-        if paths.len() > 8 {
+        if paths.len() > MAX_BLK_DEVS {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("Max supported devices is 8, {} given", paths.len()))))
