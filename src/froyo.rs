@@ -70,14 +70,6 @@ impl<'a> Froyo<'a> {
                      -> FroyoResult<Froyo<'a>>
         where T: Borrow<Path>
     {
-        let froyo_id = Uuid::new_v4().to_simple_string();
-        let mut block_devs = BTreeMap::new();
-        for path in paths {
-            let bd = try!(BlockDev::new(&froyo_id, path.borrow(), force));
-            block_devs.insert(bd.id.clone(),
-                              BlockMember::Present(Rc::new(RefCell::new(bd))));
-        }
-
         if paths.len() < 2 {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput, "At least 2 block devices must be given")))
@@ -87,6 +79,14 @@ impl<'a> Froyo<'a> {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!("Max supported devices is 8, {} given", paths.len()))))
+        }
+
+        let froyo_id = Uuid::new_v4().to_simple_string();
+        let mut block_devs = BTreeMap::new();
+        for path in paths {
+            let bd = try!(BlockDev::new(&froyo_id, path.borrow(), force));
+            block_devs.insert(bd.id.clone(),
+                              BlockMember::Present(Rc::new(RefCell::new(bd))));
         }
 
         let dm = try!(DM::new());
