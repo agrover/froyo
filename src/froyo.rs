@@ -265,7 +265,7 @@ impl<'a> Froyo<'a> {
         match froyo_save.block_devs.len() - present_devs {
             0 => dbgp!("All {} block devices found for {}",
                        block_devs.len(), froyo_save.name),
-            num @ 1...FROYO_REDUNDANCY => dbgp!("Missing {} of {} drives from {}, can continue",
+            num @ 1...REDUNDANCY => dbgp!("Missing {} of {} drives from {}, can continue",
                                                 num, froyo_save.block_devs.len(), froyo_save.name),
             num => return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,

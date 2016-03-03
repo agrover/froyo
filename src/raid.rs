@@ -90,12 +90,12 @@ impl RaidDev {
             .collect();
 
         let present_devs = devs.iter().filter_map(|ref x| x.present()).count();
-        if present_devs < (devs.len() - FROYO_REDUNDANCY) {
+        if present_devs < (devs.len() - REDUNDANCY) {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
                 format!(
                     "Too many missing devs to create raid: {}. Need at least {} of {}",
-                    devs.len() - present_devs, devs.len() - FROYO_REDUNDANCY,
+                    devs.len() - present_devs, devs.len() - REDUNDANCY,
                     devs.len()))))
         }
 
@@ -113,7 +113,7 @@ impl RaidDev {
         }
 
         let target_length = first_present_dev_len
-            * Sectors::new((devs.len() - FROYO_REDUNDANCY) as u64);
+            * Sectors::new((devs.len() - REDUNDANCY) as u64);
 
         let params = format!("raid5_ls 3 {} region_size {} {} {}",
                              *stripe,
@@ -250,7 +250,7 @@ impl RaidDev {
 
         let raid_status = match bad {
             0 => RaidStatus::Good,
-            x @ 1...FROYO_REDUNDANCY => RaidStatus::Degraded(x),
+            x @ 1...REDUNDANCY => RaidStatus::Degraded(x),
             _ => RaidStatus::Failed,
         };
 

@@ -4,7 +4,7 @@
 
 use types::{Sectors, SectorOffset};
 
-pub const FROYO_REDUNDANCY: usize = 1;
+pub const REDUNDANCY: usize = 1;
 pub const MIN_BLK_DEVS: usize = 2;
 
 // Before increasing, either check if md-raid is good for wider, or
