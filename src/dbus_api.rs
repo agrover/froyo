@@ -177,6 +177,8 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                     let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
                     try!(froyo.add_block_device(Path::new(&new_dev), force)
                         .map_err(|_| MethodErr::failed(&"Adding block device failed")));
+                    try!(froyo.save_state()
+                         .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
                     Ok(vec![m.method_return()])
                 })
                     .in_arg(("new_device_path", "s"))
@@ -200,6 +202,8 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                     let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
                     try!(froyo.remove_block_device(Path::new(&removing_dev))
                         .map_err(|_| MethodErr::failed(&"Removing block device failed")));
+                    try!(froyo.save_state()
+                         .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
                     Ok(vec![m.method_return()])
                 })
                     .in_arg(("new_device_path", "s")));
@@ -243,4 +247,3 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
 
     Ok(tree)
 }
-
