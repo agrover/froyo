@@ -171,14 +171,6 @@ impl<'a> Froyo<'a> {
         Ok(())
     }
 
-    pub fn add_blockdev(&mut self, path: &Path, force: bool) -> FroyoResult<()> {
-        let bd = try!(BlockDev::new(&self.id, path, force));
-        self.block_devs.insert(
-            bd.id.clone(), BlockMember::Present(Rc::new(RefCell::new(bd))));
-        try!(self.save_state());
-        Ok(())
-    }
-
     pub fn to_metadata(&self) -> FroyoResult<String> {
         Ok(try!(serde_json::to_string(&self.to_save())))
     }
@@ -694,21 +686,14 @@ impl<'a> Froyo<'a> {
         Ok(())
     }
 
-    pub fn add_block_device<T: Borrow<Path>>(&mut self, path: T, force: bool)
-                                             -> FroyoResult<()> {
-
-        let new_bd = try!(BlockDev::new(&self.id, path.borrow(), force));
+    pub fn add_block_device(&mut self, path: &Path, force: bool) -> FroyoResult<()> {
+        let bd = try!(BlockDev::new(&self.id, path, force));
         self.block_devs.insert(
-            new_bd.id.clone(), BlockMember::Present(Rc::new(RefCell::new(new_bd))));
-        try!(self.save_state());
-
-        // TODO: schedule a reshape?
-
+            bd.id.clone(), BlockMember::Present(Rc::new(RefCell::new(bd))));
         Ok(())
     }
 
-    pub fn remove_block_device<T: Borrow<Path>>(&mut self, path: T)
-                                                -> FroyoResult<()> {
+    pub fn remove_block_device(&mut self, path: &Path) -> FroyoResult<()> {
         // 1. if blockdev is not used by any raids, remove from self.block_devs,
         // wipe superblock, save state, refresh dbus
         //
