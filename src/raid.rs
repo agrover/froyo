@@ -72,9 +72,13 @@ impl RaidMember {
 }
 
 impl RaidDev {
-    pub fn setup(dm: &DM, name: &str, id: String, devs: Vec<RaidMember>,
-                 stripe: Sectors, region: Sectors)
-                 -> FroyoResult<RaidDev> {
+
+    fn make_raid_params(
+        devs: &[RaidMember],
+        stripe: Sectors,
+        region: Sectors)
+        -> String {
+
         let raid_texts: Vec<_> = devs.iter()
             .map(|dev|
                  match *dev {
@@ -89,6 +93,16 @@ impl RaidDev {
                  })
             .collect();
 
+        format!("raid5_ls 3 {} region_size {} {} {}",
+                *stripe,
+                *region,
+                raid_texts.len(),
+                raid_texts.join(" "))
+    }
+
+    pub fn setup(dm: &DM, name: &str, id: String, devs: Vec<RaidMember>,
+                 stripe: Sectors, region: Sectors)
+                 -> FroyoResult<RaidDev> {
         let present_devs = devs.iter().filter_map(|ref x| x.present()).count();
         if present_devs < (devs.len() - REDUNDANCY) {
             return Err(FroyoError::Io(io::Error::new(
@@ -115,11 +129,7 @@ impl RaidDev {
         let target_length = first_present_dev_len
             * Sectors::new((devs.len() - REDUNDANCY) as u64);
 
-        let params = format!("raid5_ls 3 {} region_size {} {} {}",
-                             *stripe,
-                             *region,
-                             raid_texts.len(),
-                             raid_texts.join(" "));
+        let params = Self::make_raid_params(&devs, stripe, region);
         let raid_table = [(0u64, *target_length, "raid", params)];
         let dm_name = format!("froyo-raid5-{}-{}", name, id);
         let raid_dev = try!(setup_dm_dev(dm, &dm_name, &raid_table));
@@ -143,6 +153,19 @@ impl RaidDev {
                 try!(RefCell::borrow_mut(linear).teardown(dm))
             }
         }
+
+        Ok(())
+    }
+
+    pub fn reload(&mut self, dm: &DM) -> FroyoResult<()> {
+        let params = Self::make_raid_params(
+            &self.members, self.stripe_sectors, self.region_sectors);
+        let raid_table = [(0u64, *self.length, "raid", params)];
+        let id = &DevId::Name(&self.dm_name);
+
+        try!(dm.table_load(id, &raid_table));
+        try!(dm.device_suspend(id, DM_SUSPEND));
+        try!(dm.device_suspend(id, DmFlags::empty()));
 
         Ok(())
     }
