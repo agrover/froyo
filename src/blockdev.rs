@@ -40,7 +40,7 @@ pub struct BlockDevSave {
 #[derive(Debug, Clone)]
 pub struct BlockDev {
     pub froyodev_id: String,
-    dev: Device,
+    pub dev: Device,
     pub id: String,
     pub path: PathBuf,
     sectors: Sectors,
@@ -375,7 +375,7 @@ pub struct LinearDev {
     pub data_dev: Device,
     data_segments: Vec<LinearSegment>,
     data_dm_name: String,
-    parent: Rc<RefCell<BlockDev>>,
+    pub parent: Rc<RefCell<BlockDev>>,
 }
 
 impl LinearDev {

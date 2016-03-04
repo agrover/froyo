@@ -33,7 +33,7 @@ pub struct RaidDev {
     pub stripe_sectors: Sectors,
     pub region_sectors: Sectors,
     pub length: Sectors,
-    members: Vec<RaidMember>,
+    pub members: Vec<RaidMember>,
     used: BTreeMap<SectorOffset, Sectors>,
 }
 
@@ -63,7 +63,7 @@ pub enum RaidMember {
 }
 
 impl RaidMember {
-    fn present(&self) -> Option<Rc<RefCell<LinearDev>>> {
+    pub fn present(&self) -> Option<Rc<RefCell<LinearDev>>> {
         match *self {
             RaidMember::Present(ref x) => Some(x.clone()),
             RaidMember::Absent(_) => None,

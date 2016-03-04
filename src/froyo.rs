@@ -19,10 +19,11 @@ use time;
 
 use blockdev::{BlockDev, BlockDevSave, BlockMember};
 use blockdev::{LinearDev, LinearSegment};
-use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus, RaidMember};
+use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus,
+           RaidAction, RaidMember};
 use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus};
 use thin::{ThinDev, ThinDevSave, ThinStatus};
-use types::{Sectors, SectorOffset, DataBlocks, FroyoError, FroyoResult};
+use types::{Sectors, SectorOffset, DataBlocks, FroyoError, FroyoResult, InternalError};
 use dbus_api::DbusContext;
 use util::align_to;
 use consts::*;
@@ -687,21 +688,106 @@ impl<'a> Froyo<'a> {
     }
 
     pub fn add_block_device(&mut self, path: &Path, force: bool) -> FroyoResult<()> {
+        // TODO: if blockdev is absent in a raiddev, reload the
+        // raiddev with it as now present
         let bd = try!(BlockDev::new(&self.id, path, force));
         self.block_devs.insert(
             bd.id.clone(), BlockMember::Present(Rc::new(RefCell::new(bd))));
         Ok(())
     }
 
+    // If removing blockdev would break a raid in the Froyodev, fail
+    //
+    // If blockdev is used by raids but they can continue degraded,
+    // reload raids without LinearDevs from the blockdev
+    //
+    // Remove blockdev from self.block_devs, wipe superblock
     pub fn remove_block_device(&mut self, path: &Path) -> FroyoResult<()> {
-        // 1. if blockdev is not used by any raids, remove from self.block_devs,
-        // wipe superblock, save state, refresh dbus
-        //
-        // 2. if blockdev is used by raids but removing it from all raid would let them
-        // continue in degraded status, reload raids with RaidSegments missing and then
-        // do #1
-        //
-        // 3. if removing blockdev would break the Froyodev, fail
+
+        // Lookup the blockdev to remove.
+        // NOTE: This blockdev is a copy of an item in self.block_devs
+        // except its linear_devs is empty
+        let mut blockdev = try!(BlockDev::setup(path));
+
+        // Check this blockdev is in this froyodev
+        if !self.block_devs.contains_key(&blockdev.id) {
+            return Err(FroyoError::Froyo(InternalError(
+                format!("{} is not a member of {}",
+                        path.display(), self.name))))
+        }
+
+        // We could get affected lineardevs from looking at
+        // self.block_devs[x].linear_devs but there's no backlink from
+        // lineardevs to raids (and hard to add).
+        // Instead, do it top-down.
+        let raids_and_linears_using_dev = self.raid_devs.iter_mut()
+            .map(|(_, rd)| RefCell::borrow_mut(rd))
+            .filter_map(|rd| {
+                let mut ld_index = None;
+                for (count, rm) in rd.members.iter().enumerate() {
+                    if let Some(pres) = rm.present() {
+                        let ld = RefCell::borrow(&pres);
+                        let parent_bd = RefCell::borrow(&ld.parent);
+                        if parent_bd.dev == blockdev.dev {
+                            // A raid may only have 1 lineardev on a
+                            // given blockdev
+                            ld_index = Some(count);
+                            break
+                        }
+                    }
+                }
+                match ld_index {
+                    None => None,
+                    Some(ld_index) => Some((rd, ld_index)),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // Check status of each affected raid (if any)
+        for &(ref raid, _) in &raids_and_linears_using_dev {
+            let (status, action) = try!(raid.status());
+            match status {
+                RaidStatus::Good => {},
+                RaidStatus::Degraded(x) if x < REDUNDANCY => {},
+                _ => {
+                    return Err(FroyoError::Froyo(InternalError(
+                        format!("Cannot remove {}, a RAID would fail",
+                                path.display()))))
+                },
+            }
+            match action {
+                RaidAction::Idle => {},
+                x => {
+                    return Err(FroyoError::Froyo(InternalError(
+                        format!("Cannot remove {}, a RAID is in state {:?}",
+                                path.display(), x))))
+                }
+            }
+        }
+
+        if !raids_and_linears_using_dev.is_empty() {
+            let dm = try!(DM::new());
+
+            // Reconfigure affected raids w/o the lineardev
+            for (ref mut raid, ld_idx) in raids_and_linears_using_dev {
+                // Take out Present value...
+                let rm = raid.members[ld_idx].clone();
+                let ld = rm.present().expect("should be here!!!");
+
+                // ..put in Absent value.
+                let mut borrowed_ld = RefCell::borrow_mut(&ld);
+                raid.members[ld_idx] = RaidMember::Absent(borrowed_ld.to_save());
+
+                // TODO panic if reload fails???
+                try!(raid.reload(&dm));
+                try!(borrowed_ld.teardown(&dm));
+            }
+        }
+
+        self.block_devs.remove(&blockdev.id)
+            .expect("blockdev should always still be here for us to remove");
+        try!(blockdev.wipe_mda_header());
+
         Ok(())
     }
 
