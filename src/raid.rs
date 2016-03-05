@@ -22,7 +22,8 @@ pub struct RaidDevSave {
     pub stripe_sectors: Sectors,
     pub region_sectors: Sectors,
     pub length: Sectors,
-    pub members: Vec<LinearDevSave>,
+    pub member_count: usize,
+    pub members: BTreeMap<String, LinearDevSave>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,14 +60,14 @@ pub enum RaidAction {
 #[derive(Debug, Clone)]
 pub enum RaidMember {
     Present(Rc<RefCell<LinearDev>>),
-    Absent(LinearDevSave),
+    Absent,
 }
 
 impl RaidMember {
     pub fn present(&self) -> Option<Rc<RefCell<LinearDev>>> {
         match *self {
             RaidMember::Present(ref x) => Some(x.clone()),
-            RaidMember::Absent(_) => None,
+            RaidMember::Absent => None,
         }
     }
 }
@@ -89,7 +90,7 @@ impl RaidDev {
                                  RefCell::borrow(dev).data_dev.major,
                                  RefCell::borrow(dev).data_dev.minor)
                      },
-                     RaidMember::Absent(_) => "- -".to_owned(),
+                     RaidMember::Absent => "- -".to_owned(),
                  })
             .collect();
 
@@ -175,12 +176,15 @@ impl RaidDev {
             stripe_sectors: self.stripe_sectors,
             region_sectors: self.region_sectors,
             length: self.length,
-            members: self.members.iter()
-                .map(|dev|
-                     match *dev {
-                         RaidMember::Present(ref x) => RefCell::borrow(x).to_save(),
-                         RaidMember::Absent(ref x) => x.clone(),
-                     })
+            member_count: self.members.len(),
+            members: self.members.iter().enumerate()
+                .filter_map(|(position, dev)| {
+                    if let RaidMember::Present(ref x) = *dev {
+                        Some((position.to_string(), RefCell::borrow(x).to_save()))
+                    } else {
+                        None
+                    }
+                })
                 .collect(),
         }
     }

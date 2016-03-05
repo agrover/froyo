@@ -240,19 +240,15 @@ impl<'a> Froyo<'a> {
             .collect::<BTreeMap<_, _>>();
 
         let mut block_devs = BTreeMap::new();
-        let mut present_devs = 0usize;
         for (id, sbd) in &froyo_save.block_devs {
             match bd_map.remove(id) {
-                Some(x) => {
+                Some(bd) => {
                     block_devs.insert(
-                        id.clone(), BlockMember::Present(Rc::new(RefCell::new(x))));
-                    present_devs += 1;
+                        id.clone(), BlockMember::Present(Rc::new(RefCell::new(bd))));
                 },
                 None => {
-                    ::dbgp!("missing a blockdev: id {} path {}", id,
-                            sbd.path.display());
-                    block_devs.insert(
-                        id.clone(), BlockMember::Absent(sbd.clone()));
+                    dbgp!("missing a blockdev: id {} path {}", id, sbd.path.display());
+                    block_devs.insert(id.clone(), BlockMember::Absent(sbd.clone()));
                 }
             }
         }
@@ -263,77 +259,93 @@ impl<'a> Froyo<'a> {
                   bd.path.display(), froyo_save.name);
         }
 
-        match froyo_save.block_devs.len() - present_devs {
-            0 => dbgp!("All {} block devices found for {}",
-                       block_devs.len(), froyo_save.name),
-            num @ 1...REDUNDANCY => dbgp!("Missing {} of {} drives from {}, can continue",
-                                                num, froyo_save.block_devs.len(), froyo_save.name),
-            num => return Err(FroyoError::Io(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{} of {} devices missing from {}",
-                        num, froyo_save.block_devs.len(), froyo_save.name)))),
-        }
-
         Ok(block_devs)
     }
 
+    fn setup_raiddev(
+        dm: &DM,
+        froyo_id: &str,
+        raid_id: &str,
+        raid_save: &RaidDevSave,
+        block_devs: &BTreeMap<String, BlockMember>)
+        -> FroyoResult<RaidDev> {
+        let mut linear_devs = Vec::new();
+
+        // Loop through saved struct and setup legs if present in both
+        // the blockdev list and the raid members list
+        for count in 0..raid_save.member_count {
+            match raid_save.members.get(&count.to_string()) {
+                Some(sld) => {
+                    match block_devs.get(&sld.parent) {
+                        Some(bm) => {
+                            match *bm {
+                                BlockMember::Present(ref bd) => {
+                                    let ld = Rc::new(RefCell::new(try!(LinearDev::setup(
+                                        &dm,
+                                        &format!("{}-{}-{}", froyo_id, raid_id, count),
+                                        &bd,
+                                        &sld.meta_segments,
+                                        &sld.data_segments))));
+                                    bd.borrow_mut().linear_devs.push(ld.clone());
+                                    linear_devs.push(RaidMember::Present(ld));
+                                },
+                                BlockMember::Absent(_) => {
+                                    dbgp!("Expected device absent from raid {}", raid_id);
+                                    linear_devs.push(RaidMember::Absent);
+                                },
+                            }
+                        },
+                        None => {
+                            return Err(FroyoError::Io(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Invalid metadata, raiddev {} references \
+                                         blockdev {} that is not found in \
+                                         blockdev list",
+                                        raid_id, sld.parent))))
+                        },
+                    }
+                },
+                None => {
+                    dbgp!("Raid {} member not present", raid_id);
+                    linear_devs.push(RaidMember::Absent);
+                },
+            }
+        }
+
+        RaidDev::setup(
+            &dm,
+            &froyo_id,
+            raid_id.to_owned(),
+            linear_devs,
+            raid_save.stripe_sectors,
+            raid_save.region_sectors)
+    }
+
     fn setup_raiddevs(
+        dm: &DM,
         froyo_save: &FroyoSave,
         block_devs: &BTreeMap<String, BlockMember>)
         -> FroyoResult<BTreeMap<String, Rc<RefCell<RaidDev>>>> {
-        let dm = try!(DM::new());
-
         let mut raid_devs = BTreeMap::new();
         for (id, srd) in &froyo_save.raid_devs {
-            let mut linear_devs = Vec::new();
-            for (m_num, sld) in srd.members.iter().enumerate() {
-                match block_devs.get(&sld.parent) {
-                    Some(bd) => {
-                        match *bd {
-                            BlockMember::Present(ref bd) => {
-                                let ld = Rc::new(RefCell::new(try!(LinearDev::setup(
-                                    &dm, &format!("{}-{}-{}", froyo_save.id, id, m_num),
-                                    &bd, &sld.meta_segments, &sld.data_segments))));
-                                bd.borrow_mut().linear_devs.push(ld.clone());
-                                linear_devs.push(RaidMember::Present(ld));
-                            },
-                            BlockMember::Absent(_) => {
-                                dbgp!("Parent {} missing for a linear device", sld.parent);
-                                linear_devs.push(RaidMember::Absent(sld.clone()));
-                            },
-                        }
-                    },
-                    None => {
-                        return Err(FroyoError::Io(io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            format!("Invalid metadata, raiddev {} references blockdev {} \
-                                     that is not found in blockdev list",
-                                    id, sld.parent))))
-                    },
-                }
-            }
-
-            // TODO: handle when devs is less than what's in srd
-            let rd = Rc::new(RefCell::new(try!(RaidDev::setup(
+            let rd = Rc::new(RefCell::new(try!(Self::setup_raiddev(
                 &dm,
                 &froyo_save.id,
-                id.clone(),
-                linear_devs,
-                srd.stripe_sectors,
-                srd.region_sectors))));
-
+                id,
+                srd,
+                block_devs))));
             let id = RefCell::borrow(&rd).id.clone();
+
             raid_devs.insert(id, rd);
         }
         Ok(raid_devs)
     }
 
     fn setup_thinpool(
+        dm: &DM,
         froyo_save: &FroyoSave,
         raid_devs: &BTreeMap<String, Rc<RefCell<RaidDev>>>)
         -> FroyoResult<ThinPoolDev> {
-        let dm = try!(DM::new());
-
         let tpd = &froyo_save.thin_pool_dev;
 
         let meta_name = format!("thin-meta-{}", froyo_save.id);
@@ -381,11 +393,11 @@ impl<'a> Froyo<'a> {
                  -> FroyoResult<Froyo<'a>> {
         let block_devs = try!(Froyo::setup_blockdevs(&froyo_save, found_blockdevs));
 
-        let raid_devs = try!(Froyo::setup_raiddevs(&froyo_save, &block_devs));
-
-        let thin_pool_dev = try!(Froyo::setup_thinpool(&froyo_save, &raid_devs));
-
         let dm = try!(DM::new());
+
+        let raid_devs = try!(Froyo::setup_raiddevs(&dm, &froyo_save, &block_devs));
+
+        let thin_pool_dev = try!(Froyo::setup_thinpool(&dm, &froyo_save, &raid_devs));
 
         let mut thin_devs = Vec::new();
         for std in &froyo_save.thin_devs {
@@ -776,7 +788,7 @@ impl<'a> Froyo<'a> {
 
                 // ..put in Absent value.
                 let mut borrowed_ld = RefCell::borrow_mut(&ld);
-                raid.members[ld_idx] = RaidMember::Absent(borrowed_ld.to_save());
+                raid.members[ld_idx] = RaidMember::Absent;
 
                 // TODO panic if reload fails???
                 try!(raid.reload(&dm));
