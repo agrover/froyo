@@ -110,10 +110,10 @@ fn add(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     let dev_paths: Vec<_> = args.values_of("devices").unwrap().into_iter()
         .map(|dev| {
-            if !Path::new(dev).is_absolute() {
-                PathBuf::from(format!("/dev/{}", dev))
-            } else {
+            if Path::new(dev).is_absolute() {
                 PathBuf::from(dev)
+            } else {
+                PathBuf::from(format!("/dev/{}", dev))
             }})
         .collect();
     let force = args.is_present("force");
@@ -136,10 +136,10 @@ fn remove(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     let bd_path = {
         let dev = args.value_of("blockdev").unwrap();
-        if !Path::new(dev).is_absolute() {
-            PathBuf::from(format!("/dev/{}", dev))
-        } else {
+        if Path::new(dev).is_absolute() {
             PathBuf::from(dev)
+        } else {
+            PathBuf::from(format!("/dev/{}", dev))
         }
     };
 
@@ -159,10 +159,10 @@ fn create(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     let dev_paths: Vec<_> = args.values_of("devices").unwrap().into_iter()
         .map(|dev| {
-            if !Path::new(dev).is_absolute() {
-                PathBuf::from(format!("/dev/{}", dev))
-            } else {
+            if Path::new(dev).is_absolute() {
                 PathBuf::from(dev)
+            } else {
+                PathBuf::from(format!("/dev/{}", dev))
             }})
         .collect();
     let force = args.is_present("force");
