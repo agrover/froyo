@@ -807,4 +807,63 @@ impl<'a> Froyo<'a> {
         // TODO: kick off a reshape
         Ok(())
     }
+
+    pub fn dump_status(&self) -> FroyoResult<()> {
+        dbgp!("Froyo name: {}", self.name);
+
+        dbgp!("Block devs: {}", self.block_devs.len());
+        for bm in self.block_devs.values() {
+            match *bm {
+                BlockMember::Present(ref bd) => {
+                    let bd = RefCell::borrow(&bd);
+                    dbgp!("  dev {} largest avail {}",
+                          bd.path.display(),
+                          bd.largest_avail_area().map(|(_, x)| *x).unwrap_or(0u64));
+                },
+                BlockMember::Absent(ref bds) => {
+                    dbgp!("  dev {} absent", bds.path.display());
+                },
+            }
+        }
+
+        for (raid_count, raid) in self.raid_devs.values().enumerate() {
+            let raid = RefCell::borrow(raid);
+            let (status, action) = try!(raid.status());
+            dbgp!("Raid dev #{} status {:?} action {:?}", raid_count, status, action);
+            for (leg_count, rm) in raid.members.iter().enumerate() {
+                match *rm {
+                    RaidMember::Present(ref ld) => {
+                        let ld = RefCell::borrow(&ld);
+                        dbgp!("  #{} size {}", leg_count, *ld.data_length());
+                    },
+                    RaidMember::Absent => dbgp!("  #{} absent", leg_count),
+                }
+            }
+        }
+
+        let tp_status = try!(self.thin_pool_dev.status());
+        let txt_status = match tp_status {
+            ThinPoolStatus::Fail => "Failed".to_owned(),
+            ThinPoolStatus::Good((status, usage)) => format!(
+                "{:?}, {} of {} data, {} of {} meta blocks used",
+                status, *usage.used_data,
+                *usage.total_data,
+                usage.used_meta,
+                usage.total_meta),
+        };
+        dbgp!("thin pool dev status: {}", txt_status);
+
+        for thin in &self.thin_devs {
+            match try!(thin.status()) {
+                ThinStatus::Fail => dbgp!("thin #{} failed", thin.thin_number),
+                ThinStatus::Good(sectors) => dbgp!("thin #{} using {} sectors",
+                                                   thin.thin_number,
+                                                   *sectors),
+            }
+        }
+
+        dbgp!("");
+
+        Ok(())
+    }
 }

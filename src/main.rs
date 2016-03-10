@@ -233,6 +233,11 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
     // so we can extend/reshape/delay/whatever in a timely fashion
     for _ in tree.run(&c, c.iter(1000)) {
 
+        let froyos = RefCell::borrow(&*froyos);
+        for froyo in &*froyos {
+            let froyo = RefCell::borrow(froyo);
+            try!(froyo.dump_status());
+        }
     }
 
     Ok(())

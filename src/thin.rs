@@ -251,7 +251,7 @@ pub struct ThinDevSave {
 pub struct ThinDev {
     dev: Device,
     name: String,
-    thin_number: u32,
+    pub thin_number: u32,
     pub size: Sectors,
     dm_name: String,
     params: String,
