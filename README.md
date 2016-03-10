@@ -14,6 +14,9 @@ Drobo + Free + You = Froyo!
 
 Currently requires using [Rust nightly compiler](https://doc.rust-lang.org/book/nightly-rust.html).
 
+Use nightly from 2016-03-07. If using Multirust, run `multirust override nightly-2016-03-07` in
+the `froyo` directory.
+
 ### Dev Resources
 
 IRC: `#froyo` on irc.freenode.org
