@@ -700,6 +700,19 @@ impl<'a> Froyo<'a> {
     }
 
     pub fn add_block_device(&mut self, path: &Path, force: bool) -> FroyoResult<()> {
+
+        // Adding a blockdev from another froyodev would be really bad.
+        if let Ok(test_bd) = BlockDev::setup(path) {
+            let buf = try!(test_bd.read_mdax());
+            let s = String::from_utf8_lossy(&buf).into_owned();
+            let froyo_save = try!(serde_json::from_str::<FroyoSave>(&s));
+
+            return Err(FroyoError::Froyo(InternalError(
+                format!("Block device {} is already part of froyodev \
+                         {}, id {}", path.display(), froyo_save.name,
+                        froyo_save.id))));
+        }
+
         let bd = Rc::new(RefCell::new(try!(BlockDev::new(&self.id, path, force))));
         let dm = try!(DM::new());
 
