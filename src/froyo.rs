@@ -700,11 +700,19 @@ impl<'a> Froyo<'a> {
     }
 
     pub fn add_block_device(&mut self, path: &Path, force: bool) -> FroyoResult<()> {
-        // TODO: if blockdev is absent in a raiddev, reload the
-        // raiddev with it as now present
-        let bd = try!(BlockDev::new(&self.id, path, force));
+        let bd = Rc::new(RefCell::new(try!(BlockDev::new(&self.id, path, force))));
+        let dm = try!(DM::new());
+
+        // let existing raids know about the new disk, maybe they're degraded
+        for (_, raid) in &mut self.raid_devs {
+            let mut raid = RefCell::borrow_mut(&raid);
+            try!(raid.new_block_device_added(&dm, &self.id, &bd));
+        }
+
         self.block_devs.insert(
-            bd.id.clone(), BlockMember::Present(Rc::new(RefCell::new(bd))));
+            RefCell::borrow(&bd).id.clone(),
+            BlockMember::Present(bd.clone()));
+
         Ok(())
     }
 

@@ -453,6 +453,10 @@ impl LinearDev {
         }
     }
 
+    pub fn metadata_length(&self) -> Sectors {
+        self.meta_segments.iter().map(|x| x.length).sum()
+    }
+
     pub fn data_length(&self) -> Sectors {
         self.data_segments.iter().map(|x| x.length).sum()
     }

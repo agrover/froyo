@@ -13,7 +13,7 @@ use std::fmt;
 use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
 
 use types::{Sectors, SectorOffset, FroyoError, FroyoResult};
-use blockdev::{LinearDev, LinearDevSave};
+use blockdev::{LinearDev, LinearDevSave, BlockDev, LinearSegment};
 use consts::*;
 use util::{setup_dm_dev, teardown_dm_dev};
 
@@ -299,6 +299,63 @@ impl RaidDev {
         };
 
         Ok((raid_status, raid_action))
+    }
+
+    pub fn per_member_size(&self) -> Option<(Sectors, Sectors)> {
+        // all members should be the same size
+        if let Some(ld) = self.members.iter()
+            .filter_map(|rm| rm.present())
+            .next() {
+                let ld = RefCell::borrow(&ld);
+                return Some((ld.metadata_length(), ld.data_length()));
+            }
+
+        None
+    }
+
+    // A new block device has been added. Are we degraded?
+    // Try to use it!
+    pub fn new_block_device_added(
+        &mut self,
+        dm: &DM,
+        froyo_id: &str,
+        blockdev: &Rc<RefCell<BlockDev>>)
+        -> FroyoResult<()> {
+
+        let (meta_spc, data_spc) = self.per_member_size().unwrap();
+
+        let mut added = false;
+        if let Some((index, first_missing)) = self.members.iter_mut().enumerate()
+            .filter(|&(_, ref rm)| rm.present().is_none())
+            .next() {
+                let needed = meta_spc + data_spc;
+                let (offset, len) = RefCell::borrow(blockdev).largest_avail_area()
+                    .unwrap_or((SectorOffset::new(0), Sectors::new(0)));
+                if len >= needed {
+                    let linear = Rc::new(RefCell::new(try!(LinearDev::new(
+                        &dm,
+                        &format!("{}-{}-{}", froyo_id, self.id, index),
+                        blockdev,
+                        &[LinearSegment {
+                            start: offset,
+                            length: meta_spc,
+                        }],
+                        &[LinearSegment {
+                            start: offset + SectorOffset::new(*meta_spc),
+                            length: data_spc,
+                        }]))));
+
+                    blockdev.borrow_mut().linear_devs.push(linear.clone());
+                    *first_missing = RaidMember::Present(linear);
+                    added = true;
+                }
+            }
+
+        if added {
+            try!(self.reload(dm));
+        }
+
+        Ok(())
     }
 }
 
