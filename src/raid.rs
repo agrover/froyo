@@ -275,6 +275,12 @@ impl RaidDev {
             }
         }
 
+        // Status characters indicate if a drive is faulty, but not if
+        // the raid was configured with missing devices. Add them.
+        bad += self.members.iter().
+            filter(|rm| rm.present().is_none())
+            .count();
+
         let raid_status = match bad {
             0 => RaidStatus::Good,
             x @ 1...REDUNDANCY => RaidStatus::Degraded(x),
