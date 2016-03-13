@@ -291,7 +291,9 @@ impl<'a> Froyo<'a> {
                                 },
                                 BlockMember::Absent(_) => {
                                     dbgp!("Expected device absent from raid {}", raid_id);
-                                    linear_devs.push(RaidMember::Absent);
+                                    linear_devs.push(
+                                        RaidMember::Absent((sld.parent.clone(),
+                                                            sld.clone())));
                                 },
                             }
                         },
@@ -307,7 +309,7 @@ impl<'a> Froyo<'a> {
                 },
                 None => {
                     dbgp!("Raid {} member not present", raid_id);
-                    linear_devs.push(RaidMember::Absent);
+                    linear_devs.push(RaidMember::Removed);
                 },
             }
         }
@@ -699,29 +701,83 @@ impl<'a> Froyo<'a> {
         Ok(())
     }
 
-    pub fn add_block_device(&mut self, path: &Path, force: bool) -> FroyoResult<()> {
-
-        // Adding a blockdev from another froyodev would be really bad.
-        if let Ok(test_bd) = BlockDev::setup(path) {
-            let buf = try!(test_bd.read_mdax());
-            let s = String::from_utf8_lossy(&buf).into_owned();
-            let froyo_save = try!(serde_json::from_str::<FroyoSave>(&s));
-
-            return Err(FroyoError::Froyo(InternalError(
-                format!("Block device {} is already part of froyodev \
-                         {}, id {}", path.display(), froyo_save.name,
-                        froyo_save.id))));
-        }
-
-        let bd = Rc::new(RefCell::new(try!(BlockDev::new(&self.id, path, force))));
+    fn add_new_block_device(&mut self, blockdev: &Rc<RefCell<BlockDev>>)
+                                -> FroyoResult<()> {
         let dm = try!(DM::new());
 
         // let existing raids know about the new disk, maybe they're degraded
         for (_, raid) in &mut self.raid_devs {
             let mut raid = RefCell::borrow_mut(&raid);
-            try!(raid.new_block_device_added(&dm, &self.id, &bd));
+            try!(raid.new_block_device_added(&dm, &self.id, &blockdev));
         }
 
+        Ok(())
+    }
+
+    fn add_existing_block_device(&mut self, blockdev: &Rc<RefCell<BlockDev>>)
+                                 -> FroyoResult<()> {
+        let dm = try!(DM::new());
+
+        for (_, raid) in &mut self.raid_devs {
+            let mut raid = RefCell::borrow_mut(&raid);
+            try!(raid.block_device_found(&dm, &self.id, &blockdev));
+        }
+
+        Ok(())
+    }
+
+    pub fn add_block_device(&mut self, path: &Path, force: bool) -> FroyoResult<()> {
+        let bd = {
+            match BlockDev::setup(path) {
+                Ok(found_bd) => {
+                    // Does the new blockdev's froyo id match us?
+                    if found_bd.froyodev_id == self.id {
+                        if self.block_devs.contains_key(&found_bd.id) {
+                            if let BlockMember::Present(_) =
+                                *self.block_devs.get(&found_bd.id).unwrap() {
+                                    return Err(FroyoError::Froyo(InternalError(
+                                        format!("Block member {} already present \
+                                                 in froyodev {}",
+                                                found_bd.id, self.name))))
+                                }
+
+                            // Known but absent
+                            let found_bd = Rc::new(RefCell::new(found_bd));
+                            try!(self.add_existing_block_device(&found_bd));
+                            found_bd
+                        } else {
+                            dbgp!("Block device {} mistakenly believes \
+                                   it's part of froyodev {}, adding as new",
+                                  path.display(), self.name);
+                            let new_bd = Rc::new(RefCell::new(
+                                try!(BlockDev::new(&self.id, path, force))));
+                            try!(self.add_new_block_device(&new_bd));
+                            new_bd
+                        }
+                    } else {
+                        // A blockdev from another froyodev, bad.
+                        let buf = try!(found_bd.read_mdax());
+                        let s = String::from_utf8_lossy(&buf).into_owned();
+                        let froyo_save = try!(serde_json::from_str::<FroyoSave>(&s));
+                        return Err(FroyoError::Froyo(InternalError(
+                            format!("Block device {} is already part of froyodev \
+                                     {}, id {}", path.display(), froyo_save.name,
+                                    froyo_save.id))));
+                    }
+                },
+                Err(_) => {
+                    // setup() failed, so blockdev is not a current
+                    // froyo member disk. Initialize and add it.
+                    let bd = Rc::new(RefCell::new(
+                        try!(BlockDev::new(&self.id, path, force))));
+                    try!(self.add_new_block_device(&bd));
+                    bd
+                }
+            }
+        };
+
+        // Depending on the above, we either insert or update an
+        // existing entry
         self.block_devs.insert(
             RefCell::borrow(&bd).id.clone(),
             BlockMember::Present(bd.clone()));
@@ -807,12 +863,12 @@ impl<'a> Froyo<'a> {
                 let rm = raid.members[ld_idx].clone();
                 let ld = rm.present().expect("should be here!!!");
 
-                // ..put in Absent value.
+                // ..put in Removed value.
                 let mut borrowed_ld = RefCell::borrow_mut(&ld);
-                raid.members[ld_idx] = RaidMember::Absent;
+                raid.members[ld_idx] = RaidMember::Removed;
 
                 // TODO panic if reload fails???
-                try!(raid.reload(&dm));
+                try!(raid.reload(&dm, None));
                 try!(borrowed_ld.teardown(&dm));
             }
         }
@@ -857,7 +913,8 @@ impl<'a> Froyo<'a> {
                         let ld = RefCell::borrow(&ld);
                         dbgp!("  #{} size {}", leg_count, *ld.data_length());
                     },
-                    RaidMember::Absent => dbgp!("  #{} absent", leg_count),
+                    RaidMember::Absent(_) => dbgp!("  #{} absent", leg_count),
+                    RaidMember::Removed => dbgp!("  #{} removed", leg_count),
                 }
             }
         }

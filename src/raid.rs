@@ -60,14 +60,16 @@ pub enum RaidAction {
 #[derive(Debug, Clone)]
 pub enum RaidMember {
     Present(Rc<RefCell<LinearDev>>),
-    Absent,
+    Absent((String, LinearDevSave)),
+    Removed,
 }
 
 impl RaidMember {
     pub fn present(&self) -> Option<Rc<RefCell<LinearDev>>> {
         match *self {
             RaidMember::Present(ref x) => Some(x.clone()),
-            RaidMember::Absent => None,
+            RaidMember::Absent(_) => None,
+            RaidMember::Removed => None,
         }
     }
 }
@@ -77,7 +79,8 @@ impl RaidDev {
     fn make_raid_params(
         devs: &[RaidMember],
         stripe: Sectors,
-        region: Sectors)
+        region: Sectors,
+        rebuild: Option<usize>)
         -> String {
 
         let raid_texts: Vec<_> = devs.iter()
@@ -90,15 +93,24 @@ impl RaidDev {
                                  RefCell::borrow(dev).data_dev.major,
                                  RefCell::borrow(dev).data_dev.minor)
                      },
-                     RaidMember::Absent => "- -".to_owned(),
+                     RaidMember::Absent(_) => "- -".to_owned(),
+                     RaidMember::Removed => "- -".to_owned(),
                  })
             .collect();
 
-        format!("raid5_ls 3 {} region_size {} {} {}",
-                *stripe,
-                *region,
-                raid_texts.len(),
-                raid_texts.join(" "))
+        match rebuild {
+            None => format!("raid5_ls 3 {} region_size {} {} {}",
+                            *stripe,
+                            *region,
+                            raid_texts.len(),
+                            raid_texts.join(" ")),
+            Some(idx) => format!("raid5_ls 5 {} region_size {} rebuild {} {} {}",
+                                 *stripe,
+                                 *region,
+                                 idx,
+                                 raid_texts.len(),
+                                 raid_texts.join(" ")),
+        }
     }
 
     pub fn setup(dm: &DM, name: &str, id: String, devs: Vec<RaidMember>,
@@ -130,7 +142,7 @@ impl RaidDev {
         let target_length = first_present_dev_len
             * Sectors::new((devs.len() - REDUNDANCY) as u64);
 
-        let params = Self::make_raid_params(&devs, stripe, region);
+        let params = Self::make_raid_params(&devs, stripe, region, None);
         let raid_table = [(0u64, *target_length, "raid", params)];
         let dm_name = format!("froyo-raid5-{}-{}", name, id);
         let raid_dev = try!(setup_dm_dev(dm, &dm_name, &raid_table));
@@ -143,7 +155,7 @@ impl RaidDev {
             region_sectors: region,
             length: target_length,
             members: devs,
-            used: BTreeMap::new()
+            used: BTreeMap::new(),
         })
     }
 
@@ -158,9 +170,9 @@ impl RaidDev {
         Ok(())
     }
 
-    pub fn reload(&mut self, dm: &DM) -> FroyoResult<()> {
+    pub fn reload(&mut self, dm: &DM, rebuild: Option<usize>) -> FroyoResult<()> {
         let params = Self::make_raid_params(
-            &self.members, self.stripe_sectors, self.region_sectors);
+            &self.members, self.stripe_sectors, self.region_sectors, rebuild);
         let raid_table = [(0u64, *self.length, "raid", params)];
         let id = &DevId::Name(&self.dm_name);
 
@@ -324,35 +336,73 @@ impl RaidDev {
 
         let (meta_spc, data_spc) = self.per_member_size().unwrap();
 
-        let mut added = false;
-        if let Some((index, first_missing)) = self.members.iter_mut().enumerate()
+        // get index of slot we should fill
+        let idx = self.members.iter().enumerate()
             .filter(|&(_, ref rm)| rm.present().is_none())
-            .next() {
-                let needed = meta_spc + data_spc;
-                let (offset, len) = RefCell::borrow(blockdev).largest_avail_area()
-                    .unwrap_or((SectorOffset::new(0), Sectors::new(0)));
-                if len >= needed {
-                    let linear = Rc::new(RefCell::new(try!(LinearDev::new(
-                        &dm,
-                        &format!("{}-{}-{}", froyo_id, self.id, index),
-                        blockdev,
-                        &[LinearSegment {
-                            start: offset,
-                            length: meta_spc,
-                        }],
-                        &[LinearSegment {
-                            start: offset + SectorOffset::new(*meta_spc),
-                            length: data_spc,
-                        }]))));
+            .map(|(idx, _)| idx)
+            .next();
 
-                    blockdev.borrow_mut().linear_devs.push(linear.clone());
-                    *first_missing = RaidMember::Present(linear);
-                    added = true;
-                }
+        if let Some(idx) = idx {
+            let needed = meta_spc + data_spc;
+            let (offset, len) = RefCell::borrow(blockdev).largest_avail_area()
+                .unwrap_or((SectorOffset::new(0), Sectors::new(0)));
+            if len >= needed {
+                let linear = Rc::new(RefCell::new(try!(LinearDev::new(
+                    &dm,
+                    &format!("{}-{}-{}", froyo_id, self.id, idx),
+                    blockdev,
+                    &[LinearSegment {
+                        start: offset,
+                        length: meta_spc,
+                    }],
+                    &[LinearSegment {
+                        start: offset + SectorOffset::new(*meta_spc),
+                        length: data_spc,
+                    }]))));
+                blockdev.borrow_mut().linear_devs.push(linear.clone());
+                self.members[idx] = RaidMember::Present(linear);
+
+                try!(self.reload(dm, Some(idx)));
             }
+        }
 
-        if added {
-            try!(self.reload(dm));
+        Ok(())
+    }
+
+    // If there is an absent member that matches the id of the
+    // just-found block device, set it up, mark it present, and reload
+    // the raid.
+    pub fn block_device_found(
+        &mut self,
+        dm: &DM,
+        froyo_id: &str,
+        blockdev: &Rc<RefCell<BlockDev>>)
+        -> FroyoResult<()> {
+
+        let mut bd = RefCell::borrow_mut(blockdev);
+
+        let res = self.members.iter().enumerate()
+            .filter_map(|(idx, rm)| {
+                match *rm {
+                    RaidMember::Present(_) => None,
+                    RaidMember::Absent(ref sld_tuple) => Some((idx, sld_tuple.clone())),
+                    RaidMember::Removed => None,
+                }
+            })
+            .filter(|&(_, (ref id, _))| *id == bd.id)
+            .next();
+
+        if let Some((idx, (_, sld))) = res {
+            let linear = Rc::new(RefCell::new(try!(LinearDev::setup(
+                &dm,
+                &format!("{}-{}-{}", froyo_id, self.id, idx),
+                &blockdev,
+                &sld.meta_segments,
+                &sld.data_segments))));
+            bd.linear_devs.push(linear.clone());
+            self.members[idx] = RaidMember::Present(linear);
+
+            try!(self.reload(dm, Some(idx)));
         }
 
         Ok(())
