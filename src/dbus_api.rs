@@ -181,7 +181,7 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                          .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
                     Ok(vec![m.method_return()])
                 })
-                    .in_arg(("new_device_path", "s"))
+                    .in_arg(("device_path", "s"))
                     .in_arg(("force", "b")));
 
             let froyo_closed_over = froyo.clone();
@@ -206,7 +206,7 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                          .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
                     Ok(vec![m.method_return()])
                 })
-                    .in_arg(("new_device_path", "s")));
+                    .in_arg(("device_path", "s")));
 
             let froyo_closed_over = froyo.clone();
             let mut iface = iface.add_m(
