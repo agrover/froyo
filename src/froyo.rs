@@ -518,7 +518,8 @@ impl<'a> Froyo<'a> {
                                          .next_power_of_two()
                                          / SECTOR_SIZE);
         // data size must be multiple of stripe size
-        let data_sectors = (common_avail_sectors - mdata_sectors) & Sectors::new(!(*STRIPE_SECTORS-1));
+        let data_sectors = (common_avail_sectors - mdata_sectors)
+            & Sectors::new(!(*STRIPE_SECTORS-1));
 
         let raid_uuid = Uuid::new_v4().to_simple_string();
 
