@@ -667,6 +667,7 @@ impl<'a> Froyo<'a> {
             io::Error::new(io::ErrorKind::InvalidInput,
                            "no space for extending thinpool data")));
 
+        dbgp!("Extending tpool data dev by {}", *length);
         try!(self.thin_pool_dev.extend_data_dev(new_segs));
 
         Ok(())
@@ -678,6 +679,7 @@ impl<'a> Froyo<'a> {
             io::Error::new(io::ErrorKind::InvalidInput,
                            "no space for extending thinpool meta")));
 
+        dbgp!("Extending tpool meta dev by {}", *length);
         try!(self.thin_pool_dev.extend_meta_dev(new_segs));
 
         Ok(())
