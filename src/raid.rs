@@ -432,18 +432,13 @@ impl fmt::Debug for RaidSegment {
 
 impl RaidSegment {
     pub fn new(start: SectorOffset, length: Sectors, parent: &Rc<RefCell<RaidDev>>)
-           -> RaidSegment {
-        let rs = RaidSegment {
+               -> RaidSegment {
+        RefCell::borrow_mut(parent).used.insert(start, length);
+        RaidSegment {
             start: start,
             length: length,
             parent: parent.clone(),
-        };
-        RefCell::borrow_mut(parent).used.insert(start, length);
-
-        // RaidSegments are forever. If not, then don't forget to
-        // update parent RaidDev's used vec
-
-        rs
+        }
     }
 
     pub fn to_save(&self) -> RaidSegmentSave {
