@@ -948,6 +948,7 @@ impl<'a> Froyo<'a> {
         // }
     }
 
+    #[allow(cyclomatic_complexity)]
     pub fn dump_status(&self) -> FroyoResult<()> {
         dbgp!("Froyo name: {}", self.name);
 
