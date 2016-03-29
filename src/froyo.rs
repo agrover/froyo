@@ -79,7 +79,8 @@ impl<'a> Froyo<'a> {
         if paths.len() > MAX_BLK_DEVS {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("Max supported devices is 8, {} given", paths.len()))))
+                format!("Max supported devices is {}, {} given",
+                        MAX_BLK_DEVS, paths.len()))))
         }
 
         let froyo_id = Uuid::new_v4().to_simple_string();
