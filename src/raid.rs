@@ -561,4 +561,15 @@ impl RaidLinearDev {
 
         Ok(())
     }
+
+    pub fn parents(&self) -> BTreeMap<String, Rc<RefCell<RaidDev>>> {
+        let mut map = BTreeMap::new();
+
+        for rs in &self.segments {
+            let id = RefCell::borrow(&*rs.parent).id.clone();
+            map.insert(id, rs.parent.clone());
+        }
+
+        map
+    }
 }

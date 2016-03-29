@@ -32,8 +32,8 @@ pub struct ThinPoolDev {
     data_block_size: Sectors,
     low_water_blocks: DataBlocks,
     params: String,
-    meta_dev: RaidLinearDev,
-    data_dev: RaidLinearDev,
+    pub meta_dev: RaidLinearDev,
+    pub data_dev: RaidLinearDev,
 }
 
 #[derive(Debug, Clone, Copy)]

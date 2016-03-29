@@ -16,6 +16,7 @@ use uuid::Uuid;
 use devicemapper::DM;
 use serde_json;
 use time;
+use bytesize::ByteSize;
 
 use blockdev::{BlockDev, BlockDevSave, BlockMember};
 use blockdev::{LinearDev, LinearSegment};
@@ -949,13 +950,16 @@ impl<'a> Froyo<'a> {
                 usage.total_meta),
         };
         dbgp!("thin pool dev status: {}", txt_status);
+        // TODO: Fix this Rule of Demeter violation
+        dbgp!("thin pool meta on {} raids", self.thin_pool_dev.meta_dev.parents().len());
+        dbgp!("thin pool data on {} raids", self.thin_pool_dev.data_dev.parents().len());
 
         for thin in &self.thin_devs {
             match try!(thin.status()) {
                 ThinStatus::Fail => dbgp!("thin #{} failed", thin.thin_number),
-                ThinStatus::Good(sectors) => dbgp!("thin #{} using {} sectors",
-                                                   thin.thin_number,
-                                                   *sectors),
+                ThinStatus::Good(sectors) => dbgp!(
+                    "thin #{} using {}", thin.thin_number,
+                    ByteSize::b((*sectors * SECTOR_SIZE) as usize).to_string(true)),
             }
         }
 
