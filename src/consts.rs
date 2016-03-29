@@ -36,3 +36,8 @@ pub const MAX_DATA_ZONE_SECTORS: Sectors = Sectors::new(MAX_DATA_ZONE_SIZE / SEC
 pub const MAX_REGIONS: u64 = (2 * 1024 * 1024);
 const DEFAULT_REGION_SIZE: u64 = (4 * 1024 * 1024);
 pub const DEFAULT_REGION_SECTORS: Sectors = Sectors::new(DEFAULT_REGION_SIZE / SECTOR_SIZE);
+
+// Try to create this many raids in a Froyodev. Too many is wasteful
+// but too few limits reshape options (at least until dn-raid supports
+// reshape)
+pub const IDEAL_RAID_COUNT: usize = 10;

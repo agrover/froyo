@@ -43,7 +43,7 @@ pub struct BlockDev {
     pub dev: Device,
     pub id: String,
     pub path: PathBuf,
-    sectors: Sectors,
+    pub sectors: Sectors,
     pub mdaa: MDA,
     pub mdab: MDA,
     pub linear_devs: Vec<Rc<RefCell<LinearDev>>>,
@@ -54,6 +54,16 @@ pub enum BlockMember {
     Present(Rc<RefCell<BlockDev>>),
     Absent(BlockDevSave),
 }
+
+impl BlockMember {
+    pub fn present(&self) -> Option<Rc<RefCell<BlockDev>>> {
+        match *self {
+            BlockMember::Present(ref x) => Some(x.clone()),
+            BlockMember::Absent(_) => None,
+        }
+    }
+}
+
 
 impl BlockDev {
     pub fn new(froyodev_id: &str, path: &Path, force: bool)

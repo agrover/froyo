@@ -475,8 +475,24 @@ impl<'a> Froyo<'a> {
             .min()
             .unwrap();
 
-        // Limit each RAID size as well
+        // Absolute limit on each RAID size.
         let common_avail_sectors = min(common_avail_sectors, MAX_DATA_ZONE_SECTORS);
+
+        // Also limit size in order to try to create a certain base
+        // number of RAIDs, for reshape shenanigans.
+        // Use size of 2nd largest bdev, which is guaranteed to be
+        // used fully by raids, unlike the largest.
+        let second_largest_bdev = {
+            let mut sizes = block_devs.values()
+                .filter_map(|bm| bm.present())
+                .map(|bd| RefCell::borrow(&*bd).sectors)
+                .collect::<Vec<_>>();
+            sizes.sort();
+            sizes.pop();
+            sizes.pop().unwrap()
+        };
+        let clamped_size = second_largest_bdev / Sectors::new(IDEAL_RAID_COUNT as u64);
+        let common_avail_sectors = min(common_avail_sectors, clamped_size);
 
         let (region_count, region_sectors) = {
             let mut region_sectors = DEFAULT_REGION_SECTORS;
