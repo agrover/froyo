@@ -82,14 +82,11 @@ impl ThinPoolDev {
             &Uuid::new_v4().to_simple_string(),
             data_segs));
 
-        let data_block_size = Sectors::new(2048); // 1MiB
-        let low_water_blocks = DataBlocks::new(512); // 512MiB
-
         ThinPoolDev::setup(
             dm,
             id,
-            data_block_size,
-            low_water_blocks,
+            DATA_BLOCK_SIZE,
+            DataBlocks::new(TPOOL_LOW_WATER_BLOCKS),
             meta_raid_dev,
             data_raid_dev)
     }

@@ -99,8 +99,8 @@ impl<'a> Froyo<'a> {
             raid_devs.insert(rd.id.clone(), Rc::new(RefCell::new(rd)));
         }
 
-        let meta_size = Sectors::new(8192);
-        let data_size = Sectors::new(2 * 2 * 1024 * 1024);
+        let meta_size = TPOOL_INITIAL_META_SECTORS;
+        let data_size = TPOOL_INITIAL_DATA_SECTORS;
 
         let meta_raid_segments = try!(Self::get_raid_segments(
             meta_size, &raid_devs).ok_or_else(||
@@ -114,13 +114,13 @@ impl<'a> Froyo<'a> {
             &dm, &froyo_id, meta_raid_segments, data_raid_segments));
 
         let mut thin_devs = Vec::new();
-        // Create an initial 1GB thin dev
+        // Create an initial 1TB thin dev
         thin_devs.push(try!(ThinDev::new(
             &dm,
             &froyo_id,
             name, // 1st thindev name same as froyodev name
             0,
-            Sectors::new(1024 * 1024 * 1024 / SECTOR_SIZE),
+            THIN_INITIAL_SECTORS,
             &thin_pool_dev)));
 
         Ok(Froyo {

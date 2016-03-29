@@ -45,3 +45,12 @@ pub const DEFAULT_REGION_SECTORS: Sectors = Sectors::new(DEFAULT_REGION_SIZE / S
 // but too few limits reshape options (at least until dn-raid supports
 // reshape)
 pub const IDEAL_RAID_COUNT: usize = 10;
+
+pub const DATA_BLOCK_SIZE: Sectors = Sectors::new(MEGA / SECTOR_SIZE);
+pub const TPOOL_LOW_WATER_BLOCKS: u64 = 512; // 512MiB
+
+pub const TPOOL_INITIAL_META_SECTORS: Sectors = Sectors::new(4 * MEGA / SECTOR_SIZE);
+pub const TPOOL_INITIAL_DATA_SECTORS: Sectors = Sectors::new(2 * GIGA / SECTOR_SIZE);
+pub const TPOOL_EXTEND_SECTORS: Sectors = Sectors::new(GIGA / SECTOR_SIZE);
+
+pub const THIN_INITIAL_SECTORS: Sectors = Sectors::new(TERA / SECTOR_SIZE);
