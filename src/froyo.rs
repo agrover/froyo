@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::borrow::Borrow;
 use std::path::Path;
-use std::cmp::{Ordering, min};
+use std::cmp::{Ordering, min, max};
 use std::io;
 use std::io::ErrorKind;
 use std::error::Error;
@@ -492,7 +492,9 @@ impl<'a> Froyo<'a> {
             sizes.pop();
             sizes.pop().unwrap()
         };
-        let clamped_size = second_largest_bdev / Sectors::new(IDEAL_RAID_COUNT as u64);
+        let clamped_size = max(
+            second_largest_bdev / Sectors::new(IDEAL_RAID_COUNT as u64),
+            MIN_DATA_ZONE_SECTORS);
         let common_avail_sectors = min(common_avail_sectors, clamped_size);
 
         let (region_count, region_sectors) = {
