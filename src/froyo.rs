@@ -917,6 +917,7 @@ impl<'a> Froyo<'a> {
                         let remaining_data = usage.total_data - usage.used_data;
                         if remaining_data < self.thin_pool_dev.low_water_blocks {
                             try!(self.extend_thinpool_data_dev(TPOOL_EXTEND_SECTORS));
+                            try!(self.save_state());
                         }
 
                         let remaining_meta = usage.total_meta - usage.used_meta;
@@ -925,6 +926,7 @@ impl<'a> Froyo<'a> {
                             // Double it
                             let meta_sectors = self.thin_pool_dev.meta_dev.length();
                             try!(self.extend_thinpool_meta_dev(meta_sectors));
+                            try!(self.save_state());
                         }
                     }
                     _ => panic!(format!("bad thin check_status: {:?}", status))
