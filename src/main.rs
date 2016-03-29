@@ -235,7 +235,8 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
 
         let froyos = RefCell::borrow(&*froyos);
         for froyo in &*froyos {
-            let froyo = RefCell::borrow(froyo);
+            let mut froyo = RefCell::borrow_mut(froyo);
+            try!(froyo.check_status());
             try!(froyo.dump_status());
         }
     }

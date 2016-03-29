@@ -30,7 +30,7 @@ pub struct ThinPoolDev {
     dm_name: String,
     dev: Device,
     data_block_size: Sectors,
-    low_water_blocks: DataBlocks,
+    pub low_water_blocks: DataBlocks,
     params: String,
     pub meta_dev: RaidLinearDev,
     pub data_dev: RaidLinearDev,
@@ -335,7 +335,11 @@ impl ThinDev {
         try!(dm.device_suspend(id, DM_SUSPEND));
         try!(dm.device_suspend(id, DmFlags::empty()));
 
-        // TODO: filesystem still needs to be told to use extra space
+        // TODO: we need to know where it's mounted in order to call
+        // this
+        // let output = try!(Command::new("xfs_growfs")
+        //                   .arg(&mount_point)
+        //                   .output());
 
         Ok(())
     }

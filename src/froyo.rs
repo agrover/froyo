@@ -22,7 +22,7 @@ use blockdev::{BlockDev, BlockDevSave, BlockMember};
 use blockdev::{LinearDev, LinearSegment};
 use raid::{RaidDev, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus,
            RaidAction, RaidMember};
-use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus};
+use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus, ThinPoolWorkingStatus};
 use thin::{ThinDev, ThinDevSave, ThinStatus};
 use types::{Sectors, SectorOffset, DataBlocks, FroyoError, FroyoResult, InternalError};
 use dbus_api::DbusContext;
@@ -906,6 +906,44 @@ impl<'a> Froyo<'a> {
     pub fn reshape(&mut self) -> FroyoResult<()> {
         // TODO: kick off a reshape
         Ok(())
+    }
+
+    pub fn check_status(&mut self) -> FroyoResult<()> {
+        match try!(self.thin_pool_dev.status()) {
+            ThinPoolStatus::Fail => panic!("thinpool is failed!"),
+            ThinPoolStatus::Good((status, usage)) => {
+                match status {
+                    ThinPoolWorkingStatus::Good => {
+                        let remaining_data = usage.total_data - usage.used_data;
+                        if remaining_data < self.thin_pool_dev.low_water_blocks {
+                            try!(self.extend_thinpool_data_dev(TPOOL_EXTEND_SECTORS));
+                        }
+
+                        let remaining_meta = usage.total_meta - usage.used_meta;
+                        // TODO meta low-water # should probably be an independent value
+                        if remaining_meta < *self.thin_pool_dev.low_water_blocks {
+                            // Double it
+                            let meta_sectors = self.thin_pool_dev.meta_dev.length();
+                            try!(self.extend_thinpool_meta_dev(meta_sectors));
+                        }
+                    }
+                    _ => panic!(format!("bad thin check_status: {:?}", status))
+                }
+            }
+
+        };
+
+        Ok(())
+
+        // TODO check & extend thin devs
+        // for thin in &self.thin_devs {
+        //     match try!(thin.status()) {
+        //         ThinStatus::Fail => dbgp!("thin #{} failed", thin.thin_number),
+        //         ThinStatus::Good(sectors) => dbgp!("thin #{} using {} sectors",
+        //                                            thin.thin_number,
+        //                                            *sectors),
+        //     }
+        // }
     }
 
     pub fn dump_status(&self) -> FroyoResult<()> {
