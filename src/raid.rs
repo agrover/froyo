@@ -9,6 +9,7 @@ use std::io;
 use std::io::ErrorKind;
 use std::cmp::min;
 use std::fmt;
+use std::mem;
 
 use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
 
@@ -441,6 +442,14 @@ impl RaidSegment {
         }
     }
 
+    // Also update the used map over in self.parent.used.
+    fn update_length(&mut self, length: Sectors) {
+        let mut parent = RefCell::borrow_mut(&self.parent);
+        let entry = parent.used.get_mut(&self.start).unwrap();
+        mem::replace(entry, length);
+        self.length = length;
+    }
+
     pub fn to_save(&self) -> RaidSegmentSave {
         RaidSegmentSave {
             start: self.start,
@@ -538,7 +547,8 @@ impl RaidLinearDev {
             if old_last.parent.borrow().id == new_first.parent.borrow().id
                 && (old_last.start + SectorOffset::new(*old_last.length)
                     == new_first.start) {
-                    old_last.length = old_last.length + new_first.length;
+                    let new_len = old_last.length + new_first.length;
+                    old_last.update_length(new_len);
                     coal = true;
                 }
             coal
