@@ -55,12 +55,11 @@ use std::cell::RefCell;
 
 use clap::{App, Arg, SubCommand, ArgMatches};
 use bytesize::ByteSize;
-use dbus::{Connection, BusType};
+use dbus::{Connection, BusType, Message, MessageItem, FromMessageItem, Props};
 
 use types::{FroyoResult, FroyoError, InternalError};
 use consts::SECTOR_SIZE;
 use froyo::{Froyo, FroyoStatus};
-
 
 
 // We are given BlockDevs to start.
@@ -71,9 +70,35 @@ use froyo::{Froyo, FroyoStatus};
 // From that, we allocate a ThinDev.
 
 fn list(_args: &ArgMatches) -> FroyoResult<()> {
-    let froyos = try!(Froyo::find_all());
-    for f in &froyos {
-        println!("{}", f.name);
+    let c = Connection::get_private(BusType::Session).unwrap();
+    let m = Message::new_method_call(
+        "org.freedesktop.Froyo1",
+        "/org/freedesktop/froyo",
+        "org.freedesktop.DBus.ObjectManager",
+        "GetManagedObjects").unwrap();
+    let r = c.send_with_reply_and_block(m, 2000).unwrap();
+    let reply = r.get_items();
+
+    let mut froyos = Vec::new();
+    let array: &Vec<MessageItem> = FromMessageItem::from(&reply[0]).unwrap();
+    for item in array {
+        let (k, _) = FromMessageItem::from(&item).unwrap();
+        let kstr: &str = FromMessageItem::from(&k).unwrap();
+        if kstr != "/org/freedesktop/froyo" {
+            froyos.push(kstr.to_owned());
+        }
+    }
+
+    for fpath in &froyos {
+        let p = Props::new(
+            &c,
+            "org.freedesktop.Froyo1",
+            fpath,
+            "org.freedesktop.FroyoDevice1",
+            10000);
+        let item = p.get("Name").unwrap();
+        let name: &str = FromMessageItem::from(&item).unwrap();
+        println!("{}", name);
     }
 
     Ok(())
