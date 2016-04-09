@@ -49,6 +49,7 @@ pub struct Froyo<'a> {
     thin_pool_dev: ThinPoolDev,
     thin_devs: Vec<ThinDev>,
     throttled: bool,
+    reshaping: bool,
     pub dbus_context: Option<DbusContext<'a>>,
 }
 
@@ -132,6 +133,7 @@ impl<'a> Froyo<'a> {
             thin_pool_dev: thin_pool_dev,
             thin_devs: thin_devs,
             throttled: false,
+            reshaping: false,
             dbus_context: None,
         })
     }
@@ -422,6 +424,7 @@ impl<'a> Froyo<'a> {
             thin_pool_dev: thin_pool_dev,
             thin_devs: thin_devs,
             throttled: false,
+            reshaping: false,
             dbus_context: None,
         })
     }
@@ -904,7 +907,64 @@ impl<'a> Froyo<'a> {
     }
 
     pub fn reshape(&mut self) -> FroyoResult<()> {
-        // TODO: kick off a reshape
+        self.reshaping = true;
+        // Summary:
+        // phase 1: get redundant
+        // phase 2: use all space efficiently
+        //
+        // thinpool extend needed while reshape? cancel reshape. (how?)
+        //
+        // phase 1:
+        // for each degraded raiddev with data:
+        //   ** try to copy data to non-degraded raids **
+        //   make a mirror (no metadata) on top of old & new raiddev
+        //   suspend thinpool
+        //   change thinpool meta/data to use mirror dev
+        //   resume thinpool
+        //   wait until synced
+        //   suspend thinpool
+        //   remove the mirror
+        //   point thinpool raidseg at new raiddev
+        //   save state
+        //   resume thinpool
+        //   blow away original raiddev and recreate for future use
+
+        // for each degraded raiddev still with data:
+        //   ** use scratch space **
+        //   clear scratch space enough for used data areas
+        //   make a linear vol in scratch space the same size as used data
+        //   suspend thinpool
+        //   make a mirror (no metadata) with the raiddev and linear vol
+        //   change thinpool meta/data to use mirror dev
+        //   resume thinpool
+        //   wait until synced
+        //   suspend thinpool
+        //   remove the orig leg from the mirror
+        //   save state, as degraded mirror on the linear dev
+        //   resume thinpool
+        //   blow away and recreate original raiddev (may get bigger or smaller)
+        //   suspend thinpool
+        //   remove 1st mirror
+        //   make another mirror across the linear dev and the raiddev
+        //     and update thinpool table
+        //   save state, raid 1-on-5 (new thing in json? restore
+        //     properly on reboot?) in-between raid and thinpool layer?
+        //   resume thinpool
+        //   wait until synced
+        //   suspend thinpool
+        //   remove mirror, update thinpool to target raiddev
+        //   save state
+        //   resume thinpool
+
+        // what if more data on degraded raid that will fit in new
+        // raid?  then there must be another raid with space or
+        // can_reshape() would've failed.
+        // not having room for data in each iter would be a PITA.
+        // solution: do raids in most-sectors-free descending order?
+
+        // we are now redundant!
+        // phase 2: use space efficiently
+        // TBD
         Ok(())
     }
 
