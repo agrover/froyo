@@ -235,6 +235,10 @@ impl ThinPoolDev {
         try!(dm.device_suspend(id, DmFlags::empty()));
         Ok(())
     }
+
+    pub fn used_sectors(&self) -> Sectors {
+        self.meta_dev.length() + self.data_dev.length()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

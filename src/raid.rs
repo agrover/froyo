@@ -202,7 +202,7 @@ impl RaidDev {
         }
     }
 
-    fn used_areas(&self)-> Vec<(SectorOffset, Sectors)> {
+    pub fn used_areas(&self)-> Vec<(SectorOffset, Sectors)> {
         self.used.iter()
             .map(|(key, val)| {
                 (*key, *val)

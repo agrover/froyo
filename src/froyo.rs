@@ -908,6 +908,76 @@ impl<'a> Froyo<'a> {
         Ok(())
     }
 
+    // We may be reshaping either to reestablish redundancy on a
+    // smaller number of blockdevs (shrink), or to take advantage of
+    // more blockdevs (expand).
+    // To be sure we can shrink, we need sufficient scratch space and
+    // we need to check the reshaped raids will have capacity for how
+    // much data we have.
+    // Even to expand we need scratch space enough to make a copy of the
+    // most-used raiddev's data.
+    pub fn can_reshape(&self) -> bool {
+        // Just one disk, no way we can re-establish redundancy
+        if self.block_devs.iter()
+            .filter_map(|(_, bd)| bd.present())
+            .count() < 2 {
+                return false
+            }
+
+        // scratch space must be greater than largest used space in
+        // any degraded raid (so we can make a temp copy)
+        // scratch is unused space plus space from unused raids
+        let unused_space = self.block_devs.iter()
+            .filter_map(|(_, bd)| bd.present())
+            .flat_map(|bd| RefCell::borrow(&*bd).avail_areas().into_iter()
+                      .map(|(_, len)| len))
+            .sum::<Sectors>();
+
+        let unused_raid_space = self.raid_devs.iter()
+            .filter(|&(_, rd)| !RefCell::borrow(rd).used_areas().is_empty())
+            .map(|(_, rd)| {
+                let rd = RefCell::borrow(rd);
+                let (memb_meta_size, memb_data_size) = rd.per_member_size().unwrap();
+                let memb_tot_size = memb_meta_size + memb_data_size;
+                let members_present = rd.members.iter()
+                    .filter_map(|rm| rm.present())
+                    .count();
+                Sectors::new(members_present as u64 * *memb_tot_size)
+            })
+            .sum::<Sectors>();
+
+        let max_used_raid_sectors = self.raid_devs.iter()
+            .map(|(_, rd)| {
+                let rd = RefCell::borrow(rd);
+                rd.used_areas().into_iter()
+                    .map(|(_, len)| len)
+                    .sum::<Sectors>()
+            })
+            .max().unwrap_or_else(|| Sectors::new(0));
+
+        if max_used_raid_sectors > (unused_space + unused_raid_space) {
+            return false
+        }
+
+        let reshaped_tot_size = self.raid_devs.iter()
+            .map(|(_, rd)| {
+                let rd = RefCell::borrow(rd);
+                let per_member_data_size = rd.per_member_size().unwrap().1;
+                let members_present = rd.members.iter()
+                    .filter_map(|rm| rm.present())
+                    .count();
+                let sz = (members_present - REDUNDANCY) * *per_member_data_size as usize;
+                Sectors::new(sz as u64)
+            })
+            .sum::<Sectors>();
+
+        if self.thin_pool_dev.used_sectors() > reshaped_tot_size {
+            return false
+        }
+
+        true
+    }
+
     pub fn check_status(&mut self) -> FroyoResult<()> {
         match try!(self.thin_pool_dev.status()) {
             ThinPoolStatus::Fail => panic!("thinpool is failed!"),

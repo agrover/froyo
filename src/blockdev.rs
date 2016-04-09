@@ -226,7 +226,7 @@ impl BlockDev {
         used
     }
 
-    fn avail_areas(&self) -> Vec<(SectorOffset, Sectors)> {
+    pub fn avail_areas(&self) -> Vec<(SectorOffset, Sectors)> {
         let mut free = Vec::new();
 
         // Insert an entry to mark the end so the fold works correctly
