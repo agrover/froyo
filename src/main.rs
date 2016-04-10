@@ -217,18 +217,18 @@ fn add(args: &ArgMatches) -> FroyoResult<()> {
             }})
         .collect();
     let force = args.is_present("force");
+    let c = try!(Connection::get_private(BusType::Session));
+    let fpath = try!(c.froyo_path(name));
 
-    let mut froyo = match try!(Froyo::find(&name)) {
-        Some(f) => f,
-        None => return Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", name)))),
-    };
-
-    for path in &dev_paths {
-        try!(froyo.add_block_device(path, force))
+    for path in dev_paths {
+        let mut m = Message::new_method_call(
+            "org.freedesktop.Froyo1",
+            &fpath,
+            "org.freedesktop.FroyoDevice1",
+            "AddBlockDevice").unwrap();
+        m.append_items(&[path.to_string_lossy().into_owned().into(), force.into()]);
+        try!(c.send_with_reply_and_block(m, 2000));
     }
-    try!(froyo.save_state());
-
     Ok(())
 }
 
