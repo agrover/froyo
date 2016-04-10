@@ -141,7 +141,7 @@ impl RaidDev {
         }
 
         let target_length = first_present_dev_len
-            * Sectors::new((devs.len() - REDUNDANCY) as u64);
+            * Sectors((devs.len() - REDUNDANCY) as u64);
 
         let params = Self::make_raid_params(&devs, stripe, region, None);
         let raid_table = [(0u64, *target_length, "raid", params)];
@@ -216,15 +216,15 @@ impl RaidDev {
         used_vec.sort();
         // Insert an entry to mark the end of the raiddev so the fold works
         // correctly
-        used_vec.push((SectorOffset::new(*self.length), Sectors::new(0)));
+        used_vec.push((SectorOffset(*self.length), Sectors(0)));
 
         let mut avail_vec = Vec::new();
         used_vec.iter()
-            .fold(SectorOffset::new(0), |prev_end, &(start, len)| {
+            .fold(SectorOffset(0), |prev_end, &(start, len)| {
                 if prev_end < start {
-                    avail_vec.push((prev_end, Sectors::new(*start-*prev_end)));
+                    avail_vec.push((prev_end, Sectors(*start-*prev_end)));
                 }
-                start + SectorOffset::new(*len)
+                start + SectorOffset(*len)
             });
 
         avail_vec
@@ -243,7 +243,7 @@ impl RaidDev {
         let mut needed = size;
 
         for (start, len) in self.avail_areas() {
-            if needed == Sectors::new(0) {
+            if needed == Sectors(0) {
                 break
             }
 
@@ -346,7 +346,7 @@ impl RaidDev {
         if let Some(idx) = idx {
             let needed = meta_spc + data_spc;
             let (offset, len) = RefCell::borrow(blockdev).largest_avail_area()
-                .unwrap_or((SectorOffset::new(0), Sectors::new(0)));
+                .unwrap_or((SectorOffset(0), Sectors(0)));
             if len >= needed {
                 let linear = Rc::new(RefCell::new(try!(LinearDev::new(
                     &dm,
@@ -357,7 +357,7 @@ impl RaidDev {
                         length: meta_spc,
                     }],
                     &[LinearSegment {
-                        start: offset + SectorOffset::new(*meta_spc),
+                        start: offset + SectorOffset(*meta_spc),
                         length: data_spc,
                     }]))));
                 blockdev.borrow_mut().linear_devs.push(linear.clone());
@@ -483,7 +483,7 @@ impl RaidLinearDev {
     pub fn dm_table(segments: &[RaidSegment])
                     -> Vec<(u64, u64, String, String)> {
         let mut table = Vec::new();
-        let mut offset = SectorOffset::new(0);
+        let mut offset = SectorOffset(0);
         for seg in segments {
             let line = (*offset, *seg.length, "linear".to_owned(),
                         format!("{}:{} {}",
@@ -491,7 +491,7 @@ impl RaidLinearDev {
                                 RefCell::borrow(&seg.parent).dev.minor,
                                 *seg.start));
             table.push(line);
-            offset = offset + SectorOffset::new(*seg.length);
+            offset = offset + SectorOffset(*seg.length);
         }
 
         table
@@ -545,7 +545,7 @@ impl RaidLinearDev {
             let new_first = segs.first().unwrap();
             let mut coal = false;
             if old_last.parent.borrow().id == new_first.parent.borrow().id
-                && (old_last.start + SectorOffset::new(*old_last.length)
+                && (old_last.start + SectorOffset(*old_last.length)
                     == new_first.start) {
                     let new_len = old_last.length + new_first.length;
                     old_last.update_length(new_len);

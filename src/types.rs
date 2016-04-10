@@ -25,13 +25,7 @@ custom_derive! {
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
              NewtypeMul,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
-    pub struct Sectors(u64);
-}
-
-impl Sectors {
-    pub const fn new(val: u64) -> Sectors {
-        Sectors(val)
-    }
+    pub struct Sectors(pub u64);
 }
 
 impl Zero for Sectors {
@@ -62,13 +56,7 @@ custom_derive! {
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
              NewtypeMul,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
-    pub struct SectorOffset(u64);
-}
-
-impl SectorOffset {
-    pub const fn new(val: u64) -> SectorOffset {
-        SectorOffset(val)
-    }
+    pub struct SectorOffset(pub u64);
 }
 
 impl Zero for SectorOffset {
@@ -100,13 +88,7 @@ custom_derive! {
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
              NewtypeMul,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
-    pub struct DataBlocks(u64);
-}
-
-impl DataBlocks {
-    pub const fn new(val: u64) -> DataBlocks {
-        DataBlocks(val)
-    }
+    pub struct DataBlocks(pub u64);
 }
 
 impl Zero for DataBlocks {

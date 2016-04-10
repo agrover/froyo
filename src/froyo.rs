@@ -497,39 +497,39 @@ impl<'a> Froyo<'a> {
             sizes.pop().unwrap()
         };
         let clamped_size = max(
-            second_largest_bdev / Sectors::new(IDEAL_RAID_COUNT as u64),
+            second_largest_bdev / Sectors(IDEAL_RAID_COUNT as u64),
             MIN_DATA_ZONE_SECTORS);
         let common_avail_sectors = min(common_avail_sectors, clamped_size);
 
         let (region_count, region_sectors) = {
             let mut region_sectors = DEFAULT_REGION_SECTORS;
             while *common_avail_sectors / *region_sectors > MAX_REGIONS {
-                region_sectors = Sectors::new(*region_sectors * 2);
+                region_sectors = Sectors(*region_sectors * 2);
             }
 
-            let partial_region = if common_avail_sectors % region_sectors == Sectors::new(0) {
-                Sectors::new(0)
+            let partial_region = if common_avail_sectors % region_sectors == Sectors(0) {
+                Sectors(0)
             } else {
-                Sectors::new(1)
+                Sectors(1)
             };
 
             (common_avail_sectors / region_sectors + partial_region, region_sectors)
         };
 
         // each region needs 1 bit in the write intent bitmap
-        let mdata_sectors = Sectors::new(align_to(8192 + (*region_count / 8) , SECTOR_SIZE)
+        let mdata_sectors = Sectors(align_to(8192 + (*region_count / 8) , SECTOR_SIZE)
                                          .next_power_of_two()
                                          / SECTOR_SIZE);
         // data size must be multiple of stripe size
         let data_sectors = (common_avail_sectors - mdata_sectors)
-            & Sectors::new(!(*STRIPE_SECTORS-1));
+            & Sectors(!(*STRIPE_SECTORS-1));
 
         let raid_uuid = Uuid::new_v4().to_simple_string();
 
         let mut linear_devs = Vec::new();
         for (num, &mut(ref mut bd, (sector_start, _))) in bd_areas.iter_mut().enumerate() {
             let mdata_sector_start = sector_start;
-            let data_sector_start = SectorOffset::new(*mdata_sector_start + *mdata_sectors);
+            let data_sector_start = SectorOffset(*mdata_sector_start + *mdata_sectors);
 
             let linear = Rc::new(RefCell::new(try!(LinearDev::new(
                 &dm,
@@ -650,7 +650,7 @@ impl<'a> Froyo<'a> {
         let mut needed = sectors;
         let mut segs = Vec::new();
         for rd in raid_devs.values() {
-            if needed == Sectors::new(0) {
+            if needed == Sectors(0) {
                 break
             }
             let (gotten, r_segs) = RefCell::borrow(rd).get_some_space(needed);
@@ -1002,7 +1002,7 @@ impl<'a> Froyo<'a> {
                 let members_present = rd.members.iter()
                     .filter_map(|rm| rm.present())
                     .count();
-                Sectors::new(members_present as u64 * *memb_tot_size)
+                Sectors(members_present as u64 * *memb_tot_size)
             })
             .sum::<Sectors>();
 
@@ -1013,7 +1013,7 @@ impl<'a> Froyo<'a> {
                     .map(|(_, len)| len)
                     .sum::<Sectors>()
             })
-            .max().unwrap_or_else(|| Sectors::new(0));
+            .max().unwrap_or_else(|| Sectors(0));
 
         if max_used_raid_sectors > (unused_space + unused_raid_space) {
             return false
@@ -1027,7 +1027,7 @@ impl<'a> Froyo<'a> {
                     .filter_map(|rm| rm.present())
                     .count();
                 let sz = (members_present - REDUNDANCY) * *per_member_data_size as usize;
-                Sectors::new(sz as u64)
+                Sectors(sz as u64)
             })
             .sum::<Sectors>();
 

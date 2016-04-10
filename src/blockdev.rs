@@ -109,7 +109,7 @@ impl BlockDev {
             id: Uuid::new_v4().to_simple_string(),
             dev: dev,
             path: path.to_owned(),
-            sectors: Sectors::new(dev_size / SECTOR_SIZE),
+            sectors: Sectors(dev_size / SECTOR_SIZE),
             mdaa: MDA {
                 last_updated: Timespec::new(0,0),
                 length: 0,
@@ -158,7 +158,7 @@ impl BlockDev {
             // TODO: Try to read end-of-disk copy
         }
 
-        let sectors = Sectors::new(try!(blkdev_size(&f)) / SECTOR_SIZE);
+        let sectors = Sectors(try!(blkdev_size(&f)) / SECTOR_SIZE);
 
         let id = from_utf8(&buf[32..64]).unwrap();
         let froyodev_id = from_utf8(&buf[128..160]).unwrap();
@@ -209,8 +209,8 @@ impl BlockDev {
         let mut used = Vec::new();
 
         // Flag start and end mda zones as used
-        used.push((SectorOffset::new(0), MDA_ZONE_SECTORS));
-        used.push((SectorOffset::new(*self.sectors - *MDA_ZONE_SECTORS), MDA_ZONE_SECTORS));
+        used.push((SectorOffset(0), MDA_ZONE_SECTORS));
+        used.push((SectorOffset(*self.sectors - *MDA_ZONE_SECTORS), MDA_ZONE_SECTORS));
 
         for dev in &self.linear_devs {
             let dev = RefCell::borrow(dev);
@@ -231,14 +231,14 @@ impl BlockDev {
 
         // Insert an entry to mark the end so the fold works correctly
         let mut used = self.used_areas();
-        used.push((SectorOffset::new(*self.sectors), Sectors::new(0)));
+        used.push((SectorOffset(*self.sectors), Sectors(0)));
 
         used.into_iter()
-            .fold(SectorOffset::new(0), |prev_end, (start, len)| {
+            .fold(SectorOffset(0), |prev_end, (start, len)| {
                 if prev_end < start {
-                    free.push((prev_end, Sectors::new(*start - *prev_end)))
+                    free.push((prev_end, Sectors(*start - *prev_end)))
                 }
-                SectorOffset::new(*start + *len)
+                SectorOffset(*start + *len)
             });
 
         free
@@ -414,12 +414,12 @@ impl LinearDev {
 
         // meta
         let mut table = Vec::new();
-        let mut offset = SectorOffset::new(0);
+        let mut offset = SectorOffset(0);
         for seg in meta_segments {
             let line = (*offset, *seg.length, "linear",
                         format!("{}:{} {}", dev.major, dev.minor, *seg.start));
             table.push(line);
-            offset = offset + SectorOffset::new(*seg.length);
+            offset = offset + SectorOffset(*seg.length);
         }
 
         let meta_dm_name = format!("froyo-linear-meta-{}", name);
@@ -427,12 +427,12 @@ impl LinearDev {
 
         // data
         let mut table = Vec::new();
-        let mut offset = SectorOffset::new(0);
+        let mut offset = SectorOffset(0);
         for seg in data_segments {
             let line = (*offset, *seg.length, "linear",
                         format!("{}:{} {}", dev.major, dev.minor, *seg.start));
             table.push(line);
-            offset = offset + SectorOffset::new(*seg.length);
+            offset = offset + SectorOffset(*seg.length);
         }
 
         let data_dm_name = format!("froyo-linear-data-{}", name);

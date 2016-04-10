@@ -86,7 +86,7 @@ impl ThinPoolDev {
             dm,
             id,
             DATA_BLOCK_SIZE,
-            DataBlocks::new(TPOOL_LOW_WATER_BLOCKS),
+            DataBlocks(TPOOL_LOW_WATER_BLOCKS),
             meta_raid_dev,
             data_raid_dev)
     }
@@ -170,8 +170,8 @@ impl ThinPoolDev {
             ThinPoolBlockUsage {
                 used_meta: meta_vals[0].parse::<u64>().unwrap(),
                 total_meta: meta_vals[1].parse::<u64>().unwrap(),
-                used_data: DataBlocks::new(data_vals[0].parse::<u64>().unwrap()),
-                total_data: DataBlocks::new(data_vals[1].parse::<u64>().unwrap()),
+                used_data: DataBlocks(data_vals[0].parse::<u64>().unwrap()),
+                total_data: DataBlocks(data_vals[1].parse::<u64>().unwrap()),
             }
         };
 
@@ -203,11 +203,11 @@ impl ThinPoolDev {
     }
 
     pub fn sectors_to_blocks(&self, sectors: Sectors) -> DataBlocks {
-        DataBlocks::new(*sectors / *self.data_block_size)
+        DataBlocks(*sectors / *self.data_block_size)
     }
 
     pub fn blocks_to_sectors(&self, blocks: DataBlocks) -> Sectors {
-        Sectors::new(*blocks * *self.data_block_size)
+        Sectors(*blocks * *self.data_block_size)
     }
 
     pub fn extend_data_dev(&mut self, segs: Vec<RaidSegment>)
@@ -375,7 +375,7 @@ impl ThinDev {
         }
         let status_vals = status_line.split(' ').collect::<Vec<_>>();
 
-        Ok(ThinStatus::Good(Sectors::new(
+        Ok(ThinStatus::Good(Sectors(
             status_vals[0].parse::<u64>().unwrap())))
     }
 
