@@ -26,7 +26,7 @@ use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus, ThinPoolWorkingStatus};
 use thin::{ThinDev, ThinDevSave, ThinStatus};
 use types::{Sectors, SectorOffset, DataBlocks, FroyoError, FroyoResult, InternalError};
 use dbus_api::DbusContext;
-use util::align_to;
+use util::{align_to, short_id};
 use consts::*;
 
 
@@ -780,7 +780,7 @@ impl<'a> Froyo<'a> {
                                     return Err(FroyoError::Froyo(InternalError(
                                         format!("Block member {} already present \
                                                  in froyodev {}",
-                                                found_bd.id, self.name))))
+                                                short_id(&found_bd.id), self.name))))
                                 }
 
                             // Known but absent
@@ -804,7 +804,7 @@ impl<'a> Froyo<'a> {
                         return Err(FroyoError::Froyo(InternalError(
                             format!("Block device {} is already part of froyodev \
                                      {}, id {}", path.display(), froyo_save.name,
-                                    froyo_save.id))));
+                                    short_id(&froyo_save.id)))));
                     }
                 },
                 Err(_) => {

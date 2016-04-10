@@ -77,3 +77,9 @@ pub fn clear_dev(dev: Device) -> FroyoResult<()> {
 
     Ok(())
 }
+
+pub fn short_id(id: &str) -> String {
+    let mut shortstr = id.to_owned();
+    shortstr.truncate(8);
+    shortstr
+}
