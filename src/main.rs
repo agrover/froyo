@@ -69,25 +69,36 @@ use froyo::{Froyo, FroyoStatus};
 // We use these to make a ThinPoolDev.
 // From that, we allocate a ThinDev.
 
+trait FroyoDbusConnection {
+    fn froyo_paths(&self) -> FroyoResult<Vec<String>>;
+}
+
+impl FroyoDbusConnection for Connection {
+    fn froyo_paths(&self) -> FroyoResult<Vec<String>> {
+        let m = Message::new_method_call(
+            "org.freedesktop.Froyo1",
+            "/org/freedesktop/froyo",
+            "org.freedesktop.DBus.ObjectManager",
+            "GetManagedObjects").unwrap();
+        let r = try!(self.send_with_reply_and_block(m, 2000));
+        let reply = r.get_items();
+
+        let mut froyos = Vec::new();
+        let array: &Vec<MessageItem> = FromMessageItem::from(&reply[0]).unwrap();
+        for item in array {
+            let (k, _) = FromMessageItem::from(&item).unwrap();
+            let kstr: &str = FromMessageItem::from(&k).unwrap();
+            if kstr != "/org/freedesktop/froyo" {
+                froyos.push(kstr.to_owned());
+            }
+        }
+        Ok(froyos)
+    }
+}
+
 fn list(_args: &ArgMatches) -> FroyoResult<()> {
     let c = Connection::get_private(BusType::Session).unwrap();
-    let m = Message::new_method_call(
-        "org.freedesktop.Froyo1",
-        "/org/freedesktop/froyo",
-        "org.freedesktop.DBus.ObjectManager",
-        "GetManagedObjects").unwrap();
-    let r = c.send_with_reply_and_block(m, 2000).unwrap();
-    let reply = r.get_items();
-
-    let mut froyos = Vec::new();
-    let array: &Vec<MessageItem> = FromMessageItem::from(&reply[0]).unwrap();
-    for item in array {
-        let (k, _) = FromMessageItem::from(&item).unwrap();
-        let kstr: &str = FromMessageItem::from(&k).unwrap();
-        if kstr != "/org/freedesktop/froyo" {
-            froyos.push(kstr.to_owned());
-        }
-    }
+    let froyos = try!(c.froyo_paths());
 
     for fpath in &froyos {
         let p = Props::new(
