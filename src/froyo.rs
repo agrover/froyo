@@ -708,16 +708,32 @@ impl<'a> Froyo<'a> {
             let total = self.total_redundant_space();
             try!(DbusContext::update_one(&dc.total_prop, (*total).into()));
 
-            let (status, r_status): (u32,u32) = match try!(self.status()) {
+            // TODO: self.status() is not returning all status we can
+            // report via dbus, and they're also mutually exclusive,
+            // but dbus is not. If we inline that in this fn, that
+            // might make this easier to achieve.
+            let (status, mut r_status): (u32,u32) = match try!(self.status()) {
                 FroyoStatus::RaidFailed => (0x100, 0),
                 FroyoStatus::ThinPoolFailed => (0x200, 0),
                 FroyoStatus::ThinFailed => (0x400, 0),
                 FroyoStatus::Good(rs) => match rs {
-                    FroyoRunningStatus::Degraded(x) => (0, x as u32),
-                    FroyoRunningStatus::Throttled => (0, 0x800),
+                    FroyoRunningStatus::Degraded(x) => {
+                        if x as usize >= REDUNDANCY {
+                            (0, x as u32 & 0x100) // set "non-redundant" bit
+                        } else {
+                            (0, x as u32)
+                        }
+                    },
+                    FroyoRunningStatus::Throttled => (0, 0x800), // set "throttled" bit
                     FroyoRunningStatus::Good => (0, 0),
                 },
             };
+            if !self.can_reshape() {
+                r_status |= 0x200; // set "cannot reshape" bit
+            }
+            if self.reshaping {
+                r_status |= 0x400; // set "reshaping" bit
+            }
             try!(DbusContext::update_one(&dc.status_prop, status.into()));
             try!(DbusContext::update_one(&dc.running_status_prop, r_status.into()));
 
