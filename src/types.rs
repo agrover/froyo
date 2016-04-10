@@ -151,7 +151,8 @@ impl fmt::Display for FroyoError {
             FroyoError::Io(ref err) => write!(f, "IO error: {}", err),
             FroyoError::Serde(ref err) => write!(f, "Serde error: {}", err),
             FroyoError::Nix(ref err) => write!(f, "Nix error: {}", err.errno().desc()),
-            FroyoError::Dbus(ref err) => write!(f, "Dbus error: {}", err),
+            FroyoError::Dbus(ref err) => write!(
+                f, "Dbus error: {}", err.message().unwrap_or("Unknown")),
             FroyoError::Term(ref err) => write!(f, "Term error: {}", err),
         }
     }
@@ -164,7 +165,7 @@ impl Error for FroyoError {
             FroyoError::Io(ref err) => err.description(),
             FroyoError::Serde(ref err) => Error::description(err),
             FroyoError::Nix(ref err) => err.errno().desc(),
-            FroyoError::Dbus(ref err) => err.description(),
+            FroyoError::Dbus(ref err) => err.message().unwrap_or("D-Bus Error"),
             FroyoError::Term(ref err) => Error::description(err),
         }
     }
