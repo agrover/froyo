@@ -8,6 +8,7 @@
 #![plugin(clippy)]
 
 #![allow(match_same_arms)] // we seem to have instances where same arms are good
+#![allow(if_not_else)]
 #![allow(dead_code)] // only temporary, until more stuff is filled in
 
 extern crate devicemapper;
@@ -52,6 +53,7 @@ use std::process::exit;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::borrow::Cow;
 
 use clap::{App, Arg, SubCommand, ArgMatches};
 use bytesize::ByteSize;
@@ -59,7 +61,7 @@ use dbus::{Connection, BusType, Message, MessageItem, FromMessageItem, Props};
 
 use types::{FroyoResult, FroyoError, InternalError};
 use consts::SECTOR_SIZE;
-use froyo::{Froyo, FroyoStatus};
+use froyo::Froyo;
 
 
 // We are given BlockDevs to start.
@@ -71,6 +73,7 @@ use froyo::{Froyo, FroyoStatus};
 
 trait FroyoDbusConnection {
     fn froyo_paths(&self) -> FroyoResult<Vec<String>>;
+    fn froyo_path(&self, name: &str) -> FroyoResult<String>;
 }
 
 impl FroyoDbusConnection for Connection {
@@ -94,10 +97,31 @@ impl FroyoDbusConnection for Connection {
         }
         Ok(froyos)
     }
+
+    fn froyo_path(&self, name: &str) -> FroyoResult<String> {
+        let froyos = try!(self.froyo_paths());
+
+        for fpath in &froyos {
+            let p = Props::new(
+                &self,
+                "org.freedesktop.Froyo1",
+                fpath,
+                "org.freedesktop.FroyoDevice1",
+                10000);
+            let item = p.get("Name").unwrap();
+            let froyo_name: &str = FromMessageItem::from(&item).unwrap();
+            if name == froyo_name {
+                return Ok(fpath.to_owned());
+            }
+        }
+
+        Err(FroyoError::Froyo(InternalError(
+            format!("Froyodev \"{}\" not found", name))))
+    }
 }
 
 fn list(_args: &ArgMatches) -> FroyoResult<()> {
-    let c = Connection::get_private(BusType::Session).unwrap();
+    let c = try!(Connection::get_private(BusType::Session));
     let froyos = try!(c.froyo_paths());
 
     for fpath in &froyos {
@@ -107,7 +131,7 @@ fn list(_args: &ArgMatches) -> FroyoResult<()> {
             fpath,
             "org.freedesktop.FroyoDevice1",
             10000);
-        let item = p.get("Name").unwrap();
+        let item = try!(p.get("Name"));
         let name: &str = FromMessageItem::from(&item).unwrap();
         println!("{}", name);
     }
@@ -117,28 +141,68 @@ fn list(_args: &ArgMatches) -> FroyoResult<()> {
 
 fn status(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
-    match try!(Froyo::find(&name)) {
-        Some(f) => {
-            let status = match try!(f.status()) {
-                FroyoStatus::Good(_) => "good",
-                FroyoStatus::RaidFailed => "RAID failed",
-                FroyoStatus::ThinPoolFailed => "Thin pool failed",
-                FroyoStatus::ThinFailed => "Thin device failed",
-            };
+    let c = try!(Connection::get_private(BusType::Session));
+    let fpath = try!(c.froyo_path(name));
+    let p = Props::new(
+        &c,
+        "org.freedesktop.Froyo1",
+        fpath,
+        "org.freedesktop.FroyoDevice1",
+        10000);
+    let status_msg = try!(p.get("Status"));
+    let status: u32 = FromMessageItem::from(&status_msg).unwrap();
+    let r_status_msg = try!(p.get("RunningStatus"));
+    let r_status: u32 = FromMessageItem::from(&r_status_msg).unwrap();
 
-            let space = *try!(f.avail_redundant_space()) * SECTOR_SIZE;
-            let total = *f.total_redundant_space() * SECTOR_SIZE;
+    let stat_str: Cow<str> = {
+        if status != 0 {
+            let mut stats: Vec<Cow<_>> = Vec::new();
+            if 0xff & status != 0 {
+                stats.push(format!("stopped, need {} blockdevs", status & 0xff).into())
+            }
+            if 0x100 & status != 0 { stats.push("RAID failure".into()) }
+            if 0x200 & status != 0 { stats.push("Thin pool failure: metadata".into()) }
+            if 0x400 & status != 0 { stats.push("Thin pool failure: data".into()) }
+            if 0x800 & status != 0 { stats.push("Thin device failure".into()) }
+            if 0x1000 & status != 0 { stats.push("Filesystem failure".into()) }
+	    if stats.is_empty() {
+                stats.push(format!("Unenumerated failure: {:x}", status).into())
+            }
+            stats.join(", ").into()
+        } else if r_status != 0 {
+            let mut stats: Vec<Cow<_>> = Vec::new();
+            if 0xff & r_status != 0 {
+                stats.push(format!("missing {} blockdevs", r_status & 0xff).into())
+            }
+            if 0x100 & r_status != 0 { stats.push("Non-redundant".into()) }
+            if 0x200 & r_status != 0 { stats.push("Cannot reshape".into()) }
+            if 0x400 & r_status != 0 { stats.push("Reshaping".into()) }
+            if 0x800 & r_status != 0 { stats.push("Throttled".into()) }
+            if stats.is_empty() { stats.push(
+                format!("Unenumerated issue: {:x}", r_status).into())
+            }
+            stats.join(", ").into()
 
-            let percent = ((total-space) * 100) / total;
+        } else {
+            "Running".into()
+        }
+    };
 
-            println!("Status: {}, {}% used ({} of {} free)",
-                     status, percent,
-                     ByteSize::b(space as usize).to_string(true),
-                     ByteSize::b(total as usize).to_string(true));
-        },
-        None => return Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", name)))),
-    }
+    let space_msg = try!(p.get("RemainingSectors"));
+    let space: u64 = FromMessageItem::from(&space_msg).unwrap();
+    let space = space * SECTOR_SIZE;
+
+    let total_msg = try!(p.get("RemainingSectors"));
+    let total: u64 = FromMessageItem::from(&total_msg).unwrap();
+    let total = total * SECTOR_SIZE;
+
+    let percent = ((total-space) * 100) / total;
+
+    println!("Status: {}, {}% used ({} of {} free)",
+             stat_str, percent,
+             ByteSize::b(space as usize).to_string(true),
+             ByteSize::b(total as usize).to_string(true));
+
     Ok(())
 }
 
