@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::error::Error;
 
 use dbus::{Connection, NameFlag};
 use dbus::tree::{Factory, Tree, Property, MethodFn, MethodErr, EmitsChangedSignal};
@@ -72,7 +73,8 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
         }
 
         let force: bool = try!(items.pop().ok_or_else(MethodErr::no_arg)
-                               .and_then(|i| i.inner().map_err(|_| MethodErr::invalid_arg(&i))));
+                               .and_then(|i| i.inner()
+                                         .map_err(|_| MethodErr::invalid_arg(&i))));
         let blockdevs = match try!(items.pop().ok_or_else(MethodErr::no_arg)) {
             MessageItem::Array(x, _) => x,
             x => return Err(MethodErr::invalid_arg(&x)),
@@ -91,7 +93,11 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
             Err(_) => return Err(MethodErr::failed(&"Froyo create failed")),
         };
         try!(froyo.save_state()
-             .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
+             .map_err(|err| {
+                 let msg = format!("Saving state failed: {}",
+                                   err.description());
+                 MethodErr::failed(&msg)
+             }));
 
         let s = format!("/org/freedesktop/froyo/{}", froyo.id);
         let mr = m.method_return().append(s);
@@ -138,7 +144,11 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                     let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
                     froyo.name = name.clone();
                     try!(froyo.save_state()
-                         .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
+                         .map_err(|err| {
+                             let msg = format!("Saving state failed: {}",
+                                               err.description());
+                             MethodErr::failed(&msg)
+                         }));
 
                     try!(p_closed_over.set_value(name.into())
                          .map_err(|_| MethodErr::invalid_arg(&"name")));
@@ -176,9 +186,17 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
 
                     let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
                     try!(froyo.add_block_device(Path::new(&new_dev), force)
-                        .map_err(|_| MethodErr::failed(&"Adding block device failed")));
+                        .map_err(|err| {
+                            let msg = format!("Adding block device failed: {}",
+                                              err.description());
+                            MethodErr::failed(&msg)
+                        }));
                     try!(froyo.save_state()
-                         .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
+                         .map_err(|err| {
+                             let msg = format!("Saving state failed: {}",
+                                               err.description());
+                             MethodErr::failed(&msg)
+                         }));
                     Ok(vec![m.method_return()])
                 })
                     .in_arg(("device_path", "s"))
@@ -201,9 +219,17 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
 
                     let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
                     try!(froyo.remove_block_device(Path::new(&removing_dev))
-                        .map_err(|_| MethodErr::failed(&"Removing block device failed")));
+                        .map_err(|err| {
+                            let msg = format!("Removing block device failed: {}",
+                                              err.description());
+                            MethodErr::failed(&msg)
+                        }));
                     try!(froyo.save_state()
-                         .map_err(|_| MethodErr::failed(&"Froyo saving state failed")));
+                         .map_err(|err| {
+                             let msg = format!("Saving state failed: {}",
+                                               err.description());
+                             MethodErr::failed(&msg)
+                         }));
                     Ok(vec![m.method_return()])
                 })
                     .in_arg(("device_path", "s")));
@@ -213,7 +239,11 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                 f.method("Reshape", move |m,_,_| {
                     let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
                     try!(froyo.reshape()
-                        .map_err(|_| MethodErr::failed(&"Reshape failed")));
+                         .map_err(|err| {
+                             let msg = format!("Reshape failed: {}",
+                                               err.description());
+                             MethodErr::failed(&msg)
+                         }));
                     Ok(vec![m.method_return()])
                 }));
 
