@@ -72,11 +72,16 @@ use froyo::Froyo;
 // From that, we allocate a ThinDev.
 
 trait FroyoDbusConnection {
+    fn froyo_connect() -> FroyoResult<Connection>;
     fn froyo_paths(&self) -> FroyoResult<Vec<String>>;
     fn froyo_path(&self, name: &str) -> FroyoResult<String>;
 }
 
 impl FroyoDbusConnection for Connection {
+    fn froyo_connect() -> FroyoResult<Connection> {
+        let c = try!(Connection::get_private(BusType::Session));
+        Ok(c)
+    }
     fn froyo_paths(&self) -> FroyoResult<Vec<String>> {
         let m = Message::new_method_call(
             "org.freedesktop.Froyo1",
@@ -121,7 +126,7 @@ impl FroyoDbusConnection for Connection {
 }
 
 fn list(_args: &ArgMatches) -> FroyoResult<()> {
-    let c = try!(Connection::get_private(BusType::Session));
+    let c = try!(Connection::froyo_connect());
     let froyos = try!(c.froyo_paths());
 
     for fpath in &froyos {
@@ -141,7 +146,7 @@ fn list(_args: &ArgMatches) -> FroyoResult<()> {
 
 fn status(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
-    let c = try!(Connection::get_private(BusType::Session));
+    let c = try!(Connection::froyo_connect());
     let fpath = try!(c.froyo_path(name));
     let p = Props::new(
         &c,
@@ -217,7 +222,7 @@ fn add(args: &ArgMatches) -> FroyoResult<()> {
             }})
         .collect();
     let force = args.is_present("force");
-    let c = try!(Connection::get_private(BusType::Session));
+    let c = try!(Connection::froyo_connect());
     let fpath = try!(c.froyo_path(name));
 
     for path in dev_paths {
@@ -244,7 +249,7 @@ fn remove(args: &ArgMatches) -> FroyoResult<()> {
         }
     };
     let wipe = args.is_present("wipe");
-    let c = try!(Connection::get_private(BusType::Session));
+    let c = try!(Connection::froyo_connect());
     let fpath = try!(c.froyo_path(name));
 
     let mut m = Message::new_method_call(
@@ -324,7 +329,7 @@ fn dump_meta(args: &ArgMatches) -> FroyoResult<()> {
 }
 
 fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
-    let c = Connection::get_private(BusType::Session).unwrap();
+    let c = try!(Connection::froyo_connect());
     let froyos = try!(Froyo::find_all());
     let froyos = froyos.into_iter()
         .map(|f| Rc::new(RefCell::new(f)))
