@@ -580,7 +580,7 @@ impl<'a> Froyo<'a> {
             let (r_status, _) = try!(rd.status());
             match r_status {
                 RaidStatus::Failed => return Ok(FroyoStatus::RaidFailed),
-                RaidStatus::Degraded(_) => degraded += 1,
+                RaidStatus::Degraded(x) => degraded = max(degraded, x as u8),
                 RaidStatus::Good => {},
             }
         }
