@@ -728,7 +728,7 @@ impl<'a> Froyo<'a> {
                     FroyoRunningStatus::Good => (0, 0),
                 },
             };
-            if !self.can_reshape() {
+            if !self.is_reshapable() {
                 r_status |= 0x200; // set "cannot reshape" bit
             }
             if self.reshaping {
@@ -992,7 +992,7 @@ impl<'a> Froyo<'a> {
     // much data we have.
     // Even to expand we need scratch space enough to make a copy of the
     // most-used raiddev's data.
-    pub fn can_reshape(&self) -> bool {
+    pub fn is_reshapable(&self) -> bool {
         // Just one disk, no way we can re-establish redundancy
         if self.block_devs.iter()
             .filter_map(|(_, bd)| bd.present())
