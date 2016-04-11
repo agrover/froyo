@@ -60,7 +60,7 @@ use bytesize::ByteSize;
 use dbus::{Connection, BusType, Message, MessageItem, FromMessageItem, Props};
 
 use types::{FroyoResult, FroyoError, InternalError};
-use consts::SECTOR_SIZE;
+use consts::{SECTOR_SIZE, DBUS_TIMEOUT};
 use froyo::Froyo;
 
 
@@ -83,7 +83,7 @@ impl FroyoDbusConnection for Connection {
             "/org/freedesktop/froyo",
             "org.freedesktop.DBus.ObjectManager",
             "GetManagedObjects").unwrap();
-        let r = try!(self.send_with_reply_and_block(m, 2000));
+        let r = try!(self.send_with_reply_and_block(m, DBUS_TIMEOUT));
         let reply = r.get_items();
 
         let mut froyos = Vec::new();
@@ -107,7 +107,7 @@ impl FroyoDbusConnection for Connection {
                 "org.freedesktop.Froyo1",
                 fpath,
                 "org.freedesktop.FroyoDevice1",
-                10000);
+                DBUS_TIMEOUT);
             let item = p.get("Name").unwrap();
             let froyo_name: &str = FromMessageItem::from(&item).unwrap();
             if name == froyo_name {
@@ -130,7 +130,7 @@ fn list(_args: &ArgMatches) -> FroyoResult<()> {
             "org.freedesktop.Froyo1",
             fpath,
             "org.freedesktop.FroyoDevice1",
-            10000);
+            DBUS_TIMEOUT);
         let item = try!(p.get("Name"));
         let name: &str = FromMessageItem::from(&item).unwrap();
         println!("{}", name);
@@ -148,7 +148,7 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
         "org.freedesktop.Froyo1",
         fpath,
         "org.freedesktop.FroyoDevice1",
-        10000);
+        DBUS_TIMEOUT);
     let status_msg = try!(p.get("Status"));
     let status: u32 = FromMessageItem::from(&status_msg).unwrap();
     let r_status_msg = try!(p.get("RunningStatus"));
@@ -227,8 +227,9 @@ fn add(args: &ArgMatches) -> FroyoResult<()> {
             "org.freedesktop.FroyoDevice1",
             "AddBlockDevice").unwrap();
         m.append_items(&[path.to_string_lossy().into_owned().into(), force.into()]);
-        try!(c.send_with_reply_and_block(m, 2000));
+        try!(c.send_with_reply_and_block(m, DBUS_TIMEOUT));
     }
+
     Ok(())
 }
 
