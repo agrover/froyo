@@ -244,14 +244,16 @@ fn remove(args: &ArgMatches) -> FroyoResult<()> {
         }
     };
 
-    let mut froyo = match try!(Froyo::find(&name)) {
-        Some(f) => f,
-        None => return Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", name)))),
-    };
+    let c = try!(Connection::get_private(BusType::Session));
+    let fpath = try!(c.froyo_path(name));
 
-    try!(froyo.remove_block_device(&bd_path));
-    try!(froyo.save_state());
+    let mut m = Message::new_method_call(
+        "org.freedesktop.Froyo1",
+        &fpath,
+        "org.freedesktop.FroyoDevice1",
+        "RemoveBlockDevice").unwrap();
+    m.append_items(&[bd_path.to_string_lossy().into_owned().into()]);
+    try!(c.send_with_reply_and_block(m, DBUS_TIMEOUT));
 
     Ok(())
 }
