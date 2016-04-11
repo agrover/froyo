@@ -719,7 +719,7 @@ impl<'a> Froyo<'a> {
                 FroyoStatus::Good(rs) => match rs {
                     FroyoRunningStatus::Degraded(x) => {
                         if x as usize >= REDUNDANCY {
-                            (0, x as u32 & 0x100) // set "non-redundant" bit
+                            (0, x as u32 | 0x100) // set "non-redundant" bit
                         } else {
                             (0, x as u32)
                         }
