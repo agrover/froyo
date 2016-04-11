@@ -783,6 +783,7 @@ impl<'a> Froyo<'a> {
                                                 short_id(&found_bd.id), self.name))))
                                 }
 
+                            // TODO: treat as new if froyodev layout has changed
                             // Known but absent
                             let found_bd = Rc::new(RefCell::new(found_bd));
                             try!(self.add_existing_block_device(&found_bd));
@@ -833,7 +834,7 @@ impl<'a> Froyo<'a> {
     // reload raids without LinearDevs from the blockdev
     //
     // Remove blockdev from self.block_devs, wipe superblock
-    pub fn remove_block_device(&mut self, path: &Path) -> FroyoResult<()> {
+    pub fn remove_block_device(&mut self, path: &Path, wipe_sb: bool) -> FroyoResult<()> {
 
         // Lookup the blockdev to remove.
         // NOTE: This blockdev is a copy of an item in self.block_devs
@@ -904,10 +905,18 @@ impl<'a> Froyo<'a> {
                 // Take out Present value...
                 let rm = raid.members[ld_idx].clone();
                 let ld = rm.present().expect("should be here!!!");
-
-                // ..put in Removed value.
                 let mut borrowed_ld = RefCell::borrow_mut(&ld);
-                raid.members[ld_idx] = RaidMember::Removed;
+                let parent_id = RefCell::borrow(&borrowed_ld.parent).id.clone();
+
+                let new_rm = {
+                    if wipe_sb {
+                        RaidMember::Removed
+                    } else {
+                        RaidMember::Absent((parent_id, borrowed_ld.to_save()))
+                    }
+                };
+                // ..put in Removed or Absent value.
+                raid.members[ld_idx] = new_rm;
 
                 // TODO panic if reload fails???
                 try!(raid.reload(&dm, None));
@@ -915,9 +924,14 @@ impl<'a> Froyo<'a> {
             }
         }
 
-        self.block_devs.remove(&blockdev.id)
-            .expect("blockdev should always still be here for us to remove");
-        try!(blockdev.wipe_mda_header());
+        if wipe_sb {
+            self.block_devs.remove(&blockdev.id)
+                .expect("blockdev should always still be here for us to remove");
+            try!(blockdev.wipe_mda_header());
+        } else {
+            self.block_devs.insert(blockdev.id.clone(),
+                                   BlockMember::Absent(blockdev.to_save()));
+        }
 
         Ok(())
     }

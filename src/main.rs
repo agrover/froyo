@@ -243,7 +243,7 @@ fn remove(args: &ArgMatches) -> FroyoResult<()> {
             PathBuf::from(format!("/dev/{}", dev))
         }
     };
-
+    let wipe = args.is_present("wipe");
     let c = try!(Connection::get_private(BusType::Session));
     let fpath = try!(c.froyo_path(name));
 
@@ -252,7 +252,7 @@ fn remove(args: &ArgMatches) -> FroyoResult<()> {
         &fpath,
         "org.freedesktop.FroyoDevice1",
         "RemoveBlockDevice").unwrap();
-    m.append_items(&[bd_path.to_string_lossy().into_owned().into()]);
+    m.append_items(&[bd_path.to_string_lossy().into_owned().into(), wipe.into()]);
     try!(c.send_with_reply_and_block(m, DBUS_TIMEOUT));
 
     Ok(())
@@ -415,6 +415,10 @@ fn main() {
                     )
         .subcommand(SubCommand::with_name("remove")
                     .about("Remove a block device from a froyodev")
+                    .arg(Arg::with_name("wipe")
+                         .long("wipe")
+                         .help("No longer track this device as part of the froyodev")
+                    )
                     .arg(Arg::with_name("froyodevname")
                          .help("Froyodev to remove the device from")
                          .required(true)

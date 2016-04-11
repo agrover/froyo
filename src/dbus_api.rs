@@ -210,6 +210,12 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                         return Err(MethodErr::no_arg())
                     }
 
+                    let wipe: bool = try!(
+                        items.pop()
+                            .ok_or_else(MethodErr::no_arg)
+                            .and_then(
+                                |i| i.inner().map_err(|_| MethodErr::invalid_arg(&i))));
+
                     let removing_dev = try!(
                         items.pop()
                             .ok_or_else(MethodErr::no_arg)
@@ -218,7 +224,7 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                                       .map(|i| i.to_owned())));
 
                     let mut froyo = RefCell::borrow_mut(&*froyo_closed_over);
-                    try!(froyo.remove_block_device(Path::new(&removing_dev))
+                    try!(froyo.remove_block_device(Path::new(&removing_dev), wipe)
                         .map_err(|err| {
                             let msg = format!("Removing block device failed: {}",
                                               err.description());
@@ -232,7 +238,8 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                          }));
                     Ok(vec![m.method_return()])
                 })
-                    .in_arg(("device_path", "s")));
+                    .in_arg(("device_path", "s"))
+                    .in_arg(("wipe", "b")));
 
             let froyo_closed_over = froyo.clone();
             let mut iface = iface.add_m(

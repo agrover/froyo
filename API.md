@@ -115,12 +115,18 @@ behavior is similar to its use in the `Create` method.
 
 ##### Method: `RemoveBlockDevice`
 
-In Args: `BlockDevicePath`(string)
+In Args: `BlockDevicePath`(string), `Wipe` (bool)
 
 Removes the given block device from the Froyodev. If the block device
-was in-use, this will cause the Froyodev to enter either non-redundant
-or a failed mode, depending on whether the Froyodev was previously
-already non-redundant or not.
+was in-use, this will cause the Froyodev to become non-redundant. This
+call will not succeed if removing the block device would cause the
+Froyodev to fail.
+
+If `Wipe` is false, then the block device still thinks it is part of
+the Froyodev, and may be added back later without a full rebuild. If
+`Wipe` is true, the Froyo signature on the block device is wiped, and
+re-adding it to the Froyodev will treat it as a never-before-seen
+block device.
 
 ##### Method: `Reshape`
 

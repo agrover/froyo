@@ -192,10 +192,12 @@ impl RaidDev {
             member_count: self.members.len(),
             members: self.members.iter().enumerate()
                 .filter_map(|(position, dev)| {
-                    if let RaidMember::Present(ref x) = *dev {
-                        Some((position.to_string(), RefCell::borrow(x).to_save()))
-                    } else {
-                        None
+                    match *dev {
+                        RaidMember::Present(ref x) =>
+                            Some((position.to_string(), RefCell::borrow(x).to_save())),
+                        RaidMember::Absent((_, ref sld)) =>
+                            Some((position.to_string(), sld.clone())),
+                        RaidMember::Removed => None,
                     }
                 })
                 .collect(),
@@ -380,8 +382,6 @@ impl RaidDev {
         blockdev: &Rc<RefCell<BlockDev>>)
         -> FroyoResult<()> {
 
-        let mut bd = RefCell::borrow_mut(blockdev);
-
         let res = self.members.iter().enumerate()
             .filter_map(|(idx, rm)| {
                 match *rm {
@@ -390,7 +390,7 @@ impl RaidDev {
                     RaidMember::Removed => None,
                 }
             })
-            .filter(|&(_, (ref id, _))| *id == bd.id)
+            .filter(|&(_, (ref id, _))| *id == RefCell::borrow(blockdev).id)
             .next();
 
         if let Some((idx, (_, sld))) = res {
@@ -400,10 +400,10 @@ impl RaidDev {
                 &blockdev,
                 &sld.meta_segments,
                 &sld.data_segments))));
-            bd.linear_devs.push(linear.clone());
+            RefCell::borrow_mut(blockdev).linear_devs.push(linear.clone());
             self.members[idx] = RaidMember::Present(linear);
 
-            try!(self.reload(dm, Some(idx)));
+            try!(self.reload(dm, None));
         }
 
         Ok(())
