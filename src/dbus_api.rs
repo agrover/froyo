@@ -41,9 +41,14 @@ impl<'a> DbusContext<'a> {
         let mut msg_vec = Vec::new();
         for bd in block_devs.values() {
             let (bd_path, bd_status) = match *bd {
-                BlockMember::Present(ref bd) =>
-                // TODO: in-use vs not-in-use
-                    (RefCell::borrow(&bd).path.to_string_lossy().into_owned(), 0u32),
+                BlockMember::Present(ref bd) => {
+                    let bd = RefCell::borrow(&bd);
+                    let status = match bd.linear_devs.len() {
+                        0 => 1u32, // not in use
+                        _ => 0u32, // in use
+                    };
+                    (bd.path.to_string_lossy().into_owned(), status)
+                },
                 BlockMember::Absent(ref sbd) =>
                     (sbd.path.to_string_lossy().into_owned(), 3u32),
             };
