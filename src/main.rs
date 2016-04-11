@@ -288,15 +288,18 @@ fn rename(args: &ArgMatches) -> FroyoResult<()> {
     let old_name = args.value_of("froyodev_old_name").unwrap();
     let new_name = args.value_of("froyodev_new_name").unwrap();
 
-    match try!(Froyo::find(&old_name)) {
-        Some(mut f) => {
-            f.name = new_name.to_owned();
-            try!(f.save_state());
-            dbgp!("Froyodev name {} changed to {}", old_name, new_name);
-        },
-        None => return Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", old_name)))),
-    }
+    let c = try!(Connection::froyo_connect());
+    let fpath = try!(c.froyo_path(old_name));
+
+    let mut m = Message::new_method_call(
+        "org.freedesktop.Froyo1",
+        &fpath,
+        "org.freedesktop.FroyoDevice1",
+        "SetName").unwrap();
+    m.append_items(&[new_name.into()]);
+    try!(c.send_with_reply_and_block(m, DBUS_TIMEOUT));
+
+    dbgp!("Froyodev name {} changed to {}", old_name, new_name);
 
     Ok(())
 }
