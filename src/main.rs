@@ -144,6 +144,7 @@ fn list(_args: &ArgMatches) -> FroyoResult<()> {
     Ok(())
 }
 
+#[allow(cyclomatic_complexity)]
 fn status(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     let c = try!(Connection::froyo_connect());
@@ -207,6 +208,31 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
              stat_str, percent,
              ByteSize::b(space as usize).to_string(true),
              ByteSize::b(total as usize).to_string(true));
+
+    let err_msg = "Unexpected format of BlockDevices property";
+    let bdevs = try!(p.get("BlockDevices"));
+    let bdev_vec: &Vec<_> = try!(
+        bdevs.inner()
+            .map_err(|_| FroyoError::Froyo(InternalError(err_msg.into()))));
+    println!("Member devices:");
+    for bdev in bdev_vec {
+        let inner_vals: &Vec<_> = try!(
+            bdev.inner().map_err(|_| FroyoError::Froyo(InternalError(err_msg.into()))));
+        let name: &str = try!(
+            inner_vals[0].inner()
+                .map_err(|_| FroyoError::Froyo(InternalError(err_msg.into()))));
+        let status: u32 = try!(
+            inner_vals[1].inner()
+                .map_err(|_| FroyoError::Froyo(InternalError(err_msg.into()))));
+        let status_str = match status {
+            0 => "In use",
+            1 => "Not in use",
+            2 => "Bad",
+            3 => "Not present",
+            _ => "Unknown",
+        };
+        println!("{} {}", name, status_str);
+    }
 
     Ok(())
 }
