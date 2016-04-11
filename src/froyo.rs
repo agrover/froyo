@@ -780,7 +780,7 @@ impl<'a> Froyo<'a> {
                                     return Err(FroyoError::Froyo(InternalError(
                                         format!("Block member {} already present \
                                                  in froyodev {}",
-                                                short_id(&found_bd.id), self.name))))
+                                                short_id(&found_bd.id), self.name).into())))
                                 }
 
                             // TODO: treat as new if froyodev layout has changed
@@ -805,7 +805,7 @@ impl<'a> Froyo<'a> {
                         return Err(FroyoError::Froyo(InternalError(
                             format!("Block device {} is already part of froyodev \
                                      {}, id {}", path.display(), froyo_save.name,
-                                    short_id(&froyo_save.id)))));
+                                    short_id(&froyo_save.id)).into())));
                     }
                 },
                 Err(_) => {
@@ -845,7 +845,7 @@ impl<'a> Froyo<'a> {
         if !self.block_devs.contains_key(&blockdev.id) {
             return Err(FroyoError::Froyo(InternalError(
                 format!("{} is not a member of {}",
-                        path.display(), self.name))))
+                        path.display(), self.name).into())))
         }
 
         // We could get affected lineardevs from looking at
@@ -884,7 +884,7 @@ impl<'a> Froyo<'a> {
                 _ => {
                     return Err(FroyoError::Froyo(InternalError(
                         format!("Cannot remove {}, a RAID would fail",
-                                path.display()))))
+                                path.display()).into())))
                 },
             }
             match action {
@@ -892,7 +892,7 @@ impl<'a> Froyo<'a> {
                 x => {
                     return Err(FroyoError::Froyo(InternalError(
                         format!("Cannot remove {}, a RAID is in state {:?}",
-                                path.display(), x))))
+                                path.display(), x).into())))
                 }
             }
         }

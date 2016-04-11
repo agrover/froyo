@@ -6,6 +6,7 @@ use std::num::Zero;
 use std::io;
 use std::fmt;
 use std::error::Error;
+use std::borrow::Cow;
 
 use serde;
 use serde_json;
@@ -118,7 +119,7 @@ impl serde::Deserialize for DataBlocks {
 // An error type for errors generated within Froyo
 //
 #[derive(Debug, Clone)]
-pub struct InternalError(pub String);
+pub struct InternalError(pub Cow<'static, str>);
 
 impl fmt::Display for InternalError {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {

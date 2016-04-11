@@ -425,7 +425,7 @@ impl ThinDev {
         } else {
             return Err(FroyoError::Froyo(InternalError(
                 format!("XFS mkfs error: {}",
-                        String::from_utf8_lossy(&output.stderr)))))
+                        String::from_utf8_lossy(&output.stderr)).into())))
         }
         Ok(())
     }

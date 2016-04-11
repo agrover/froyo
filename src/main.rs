@@ -121,7 +121,7 @@ impl FroyoDbusConnection for Connection {
         }
 
         Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", name))))
+            format!("Froyodev \"{}\" not found", name).into())))
     }
 }
 
@@ -310,7 +310,7 @@ fn destroy(args: &ArgMatches) -> FroyoResult<()> {
             dbgp!("Froyodev {} destroyed", name);
         },
         None => return Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", name)))),
+            format!("Froyodev \"{}\" not found", name).into()))),
     }
 
     Ok(())
@@ -322,7 +322,7 @@ fn dump_meta(args: &ArgMatches) -> FroyoResult<()> {
         Some(f) =>
             println!("{}", try!(f.to_metadata_pretty())),
         None => return Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", name)))),
+            format!("Froyodev \"{}\" not found", name).into()))),
     }
 
     Ok(())
@@ -358,7 +358,7 @@ fn teardown(args: &ArgMatches) -> FroyoResult<()> {
     match try!(Froyo::find(&name)) {
         Some(mut f) => try!(f.teardown()),
         None => return Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", name)))),
+            format!("Froyodev \"{}\" not found", name).into()))),
     }
 
     Ok(())
