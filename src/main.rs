@@ -340,6 +340,7 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
         for froyo in &*froyos {
             let mut froyo = RefCell::borrow_mut(froyo);
             try!(froyo.check_status());
+            try!(froyo.update_dbus());
             try!(froyo.dump_status());
         }
     }
