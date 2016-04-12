@@ -162,7 +162,7 @@ impl<'a> Froyo<'a> {
         }
     }
 
-    pub fn destroy(mut self) -> FroyoResult<()> {
+    pub fn destroy(&mut self) -> FroyoResult<()> {
         try!(self.teardown());
 
         for bd in self.block_devs.values() {

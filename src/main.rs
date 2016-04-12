@@ -9,6 +9,8 @@
 
 #![allow(match_same_arms)] // we seem to have instances where same arms are good
 #![allow(if_not_else)]
+#![allow(similar_names)]
+#![allow(used_underscore_binding)]
 #![allow(dead_code)] // only temporary, until more stuff is filled in
 
 extern crate devicemapper;
@@ -334,7 +336,7 @@ fn destroy(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodev").unwrap();
 
     match try!(Froyo::find(&name)) {
-        Some(f) => {
+        Some(mut f) => {
             try!(f.destroy());
             dbgp!("Froyodev {} destroyed", name);
         },

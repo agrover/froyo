@@ -69,7 +69,6 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
     let f = Factory::new_fn();
 
     let froyos_closed_over = froyos.clone();
-    let mut froyos = RefCell::borrow_mut(&froyos);
 
     let create_method = f.method("Create", move |m,_,_| {
         let mut items = m.get_items();
@@ -103,6 +102,7 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
                                    err.description());
                  MethodErr::failed(&msg)
              }));
+        // TODO: Register objpath for this froyodev
 
         let s = format!("/org/freedesktop/froyo/{}", froyo.id);
         let mr = m.method_return().append(s);
@@ -116,6 +116,49 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
         .in_arg(("force", "b"))
         .out_arg(("obj_path", "s"));
 
+    let froyos_closed_over = froyos.clone();
+    let destroy_method = f.method("Destroy", move |m,_,_| {
+        let mut items = m.get_items();
+        if items.len() < 1 {
+            return Err(MethodErr::no_arg())
+        }
+
+        let name = try!(items.pop().ok_or_else(MethodErr::no_arg)
+                        .and_then(|i| i.inner::<&str>()
+                                  .map_err(|_| MethodErr::invalid_arg(&i))
+                                  .map(|i| i.to_owned())));
+
+
+        let mut froyos = RefCell::borrow_mut(&froyos_closed_over);
+        let mut froyos_to_destroy = froyos.iter().enumerate()
+            .filter_map(|(idx, f)| {
+                if RefCell::borrow(f).name == name {
+                    Some((f.clone(), idx))
+                } else {
+                    None
+                }})
+            .collect::<Vec<_>>();
+        let (froyo, idx) = match froyos_to_destroy.len() {
+            0 => return Err(MethodErr::failed(&format!("Froyodev {} not found", name))),
+            1 => froyos_to_destroy.pop().unwrap(),
+            _ => return Err(MethodErr::failed(
+                &format!("Multiple Froydevs found with name: {}. \
+                          Specify froyodev uuid", name))),
+        };
+
+        // TODO: Unregister objpath for this froyodev
+        try!(RefCell::borrow_mut(&froyo).destroy()
+             .map_err(|err| {
+                 let msg = format!("Destroying Froyodev failed: {}",
+                                   err.description());
+                 MethodErr::failed(&msg)}));
+
+        froyos.remove(idx);
+
+        Ok(vec![m.method_return()])
+    })
+        .in_arg(("name", "s"));
+
     let tree = f.tree();
     let tree = tree
         .add(f.object_path("/org/freedesktop/froyo")
@@ -123,7 +166,10 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
              .object_manager()
              .add(f.interface("org.freedesktop.FroyoService1")
                   .add_m(create_method)
+                  .add_m(destroy_method)
              ));
+
+    let mut froyos = RefCell::borrow_mut(&froyos);
 
     let tree = froyos
         .iter_mut()
@@ -282,10 +328,10 @@ pub fn get_tree<'a>(c: &Connection, froyos: &mut Rc<RefCell<Vec<Rc<RefCell<Froyo
         });
 
     for froyo in &*froyos {
-        try!(RefCell::borrow(&froyo).update_dbus());
+        try!(RefCell::borrow(froyo).update_dbus());
     }
 
-    tree.set_registered(&c, true).unwrap();
+    try!(tree.set_registered(&c, true));
 
     Ok(tree)
 }
