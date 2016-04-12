@@ -319,9 +319,10 @@ impl ThinDev {
     }
 
     pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
-        try!(self.remove_devnode());
-
+        // Do this first so if devnode is in use this fails before we
+        // remove the devnode
         try!(teardown_dm_dev(dm, &self.dm_name));
+        try!(self.remove_devnode());
 
         Ok(())
     }
