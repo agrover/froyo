@@ -100,7 +100,7 @@ impl ThinPoolDev {
         data_raid_dev: RaidLinearDev)
         -> FroyoResult<ThinPoolDev> {
 
-        let params = format!("{}:{} {}:{} {} {}",
+        let params = format!("{}:{} {}:{} {} {} 1 skip_block_zeroing",
                              meta_raid_dev.dev.major,
                              meta_raid_dev.dev.minor,
                              data_raid_dev.dev.major,
