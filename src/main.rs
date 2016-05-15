@@ -11,6 +11,7 @@
 #![allow(if_not_else)]
 #![allow(similar_names)]
 #![allow(used_underscore_binding)]
+#![allow(collapsible_if)]
 #![allow(dead_code)] // only temporary, until more stuff is filled in
 
 extern crate devicemapper;
@@ -45,6 +46,8 @@ mod consts;
 mod froyo;
 mod blockdev;
 mod raid;
+mod mirror;
+mod dmdevice;
 mod thin;
 mod util;
 mod dbus_api;
@@ -60,6 +63,8 @@ use std::borrow::Cow;
 use clap::{App, Arg, SubCommand, ArgMatches};
 use bytesize::ByteSize;
 use dbus::{Connection, BusType, Message, MessageItem, FromMessageItem, Props};
+use dbus::{ConnectionItem, MessageType};
+use time::{Timespec, Duration};
 
 use types::{FroyoResult, FroyoError, InternalError};
 use consts::{SECTOR_SIZE, DBUS_TIMEOUT};
@@ -87,7 +92,7 @@ impl FroyoDbusConnection for Connection {
     fn froyo_paths(&self) -> FroyoResult<Vec<String>> {
         let m = Message::new_method_call(
             "org.freedesktop.Froyo1",
-            "/org/freedesktop/froyo",
+            "/org/freedesktop/froyodevs",
             "org.freedesktop.DBus.ObjectManager",
             "GetManagedObjects").unwrap();
         let r = try!(self.send_with_reply_and_block(m, DBUS_TIMEOUT));
@@ -96,9 +101,9 @@ impl FroyoDbusConnection for Connection {
         let mut froyos = Vec::new();
         let array: &Vec<MessageItem> = FromMessageItem::from(&reply[0]).unwrap();
         for item in array {
-            let (k, _) = FromMessageItem::from(&item).unwrap();
-            let kstr: &str = FromMessageItem::from(&k).unwrap();
-            if kstr != "/org/freedesktop/froyo" {
+            let (k, _) = FromMessageItem::from(item).unwrap();
+            let kstr: &str = FromMessageItem::from(k).unwrap();
+            if kstr != "/org/freedesktop/froyodevs" {
                 froyos.push(kstr.to_owned());
             }
         }
@@ -110,7 +115,7 @@ impl FroyoDbusConnection for Connection {
 
         for fpath in &froyos {
             let p = Props::new(
-                &self,
+                self,
                 "org.freedesktop.Froyo1",
                 fpath,
                 "org.freedesktop.FroyoDevice1",
@@ -300,14 +305,24 @@ fn create(args: &ArgMatches) -> FroyoResult<()> {
             } else {
                 PathBuf::from(format!("/dev/{}", dev))
             }})
+        .map(|pb| pb.to_string_lossy().into_owned().into())
         .collect();
     let force = args.is_present("force");
 
-    let froyo = try!(Froyo::new(name, &dev_paths, force));
+    let c = try!(Connection::froyo_connect());
 
-    try!(froyo.save_state());
+    let mut m = Message::new_method_call(
+        "org.freedesktop.Froyo1",
+        "/org/freedesktop/froyo",
+        "org.freedesktop.FroyoService1",
+        "Create").unwrap();
+    m.append_items(&[
+        name.into(),
+        MessageItem::new_array(dev_paths).unwrap(),
+        force.into()]);
+    try!(c.send_with_reply_and_block(m, DBUS_TIMEOUT));
 
-    dbgp!("Froyodev {} created", froyo.name);
+    dbgp!("Froyodev {} created", name);
 
     Ok(())
 }
@@ -335,14 +350,35 @@ fn rename(args: &ArgMatches) -> FroyoResult<()> {
 fn destroy(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodev").unwrap();
 
-    match try!(Froyo::find(&name)) {
-        Some(mut f) => {
-            try!(f.destroy());
-            dbgp!("Froyodev {} destroyed", name);
-        },
-        None => return Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", name).into()))),
-    }
+    let c = try!(Connection::froyo_connect());
+
+    let mut m = Message::new_method_call(
+        "org.freedesktop.Froyo1",
+        "/org/freedesktop/froyo",
+        "org.freedesktop.FroyoService1",
+        "Destroy").unwrap();
+    m.append_items(&[name.into()]);
+    try!(c.send_with_reply_and_block(m, DBUS_TIMEOUT));
+
+    dbgp!("Froyodev {} destroyed", name);
+
+    Ok(())
+}
+
+fn teardown(args: &ArgMatches) -> FroyoResult<()> {
+    let name = args.value_of("froyodev").unwrap();
+
+    let c = try!(Connection::froyo_connect());
+
+    let mut m = Message::new_method_call(
+        "org.freedesktop.Froyo1",
+        "/org/freedesktop/froyo",
+        "org.freedesktop.FroyoService1",
+        "Teardown").unwrap();
+    m.append_items(&[name.into()]);
+    try!(c.send_with_reply_and_block(m, DBUS_TIMEOUT));
+
+    dbgp!("Froyodev {} torn down", name);
 
     Ok(())
 }
@@ -366,30 +402,45 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
         .map(|f| Rc::new(RefCell::new(f)))
         .collect::<Vec<_>>();
     let mut froyos = Rc::new(RefCell::new(froyos));
-    let tree = try!(dbus_api::get_tree(&c, &mut froyos));
+
+    // We can't change a tree from within the tree. So instead
+    // register two trees, one with Create and Destroy and another for
+    // querying/changing active froyodevs/
+    let child_tree = try!(dbus_api::get_child_tree(&c, &froyos.borrow()));
+    let base_tree = try!(dbus_api::get_base_tree(&c, &mut froyos, &child_tree));
 
     // TODO: event loop needs to handle dbus and also dm events (or polling)
     // so we can extend/reshape/delay/whatever in a timely fashion
-    for _ in tree.run(&c, c.iter(10000)) {
+    let mut last_time = Timespec::new(0, 0);
+    for c_item in c.iter(10000) {
+        if let ConnectionItem::MethodCall(ref msg) = c_item {
+            if msg.msg_type() != MessageType::MethodCall {
+                continue
+            }
 
-        let froyos = RefCell::borrow(&*froyos);
-        for froyo in &*froyos {
-            let mut froyo = RefCell::borrow_mut(froyo);
-            try!(froyo.check_status());
+            if let Some(v) = base_tree.handle(msg) {
+                // Probably the wisest is to ignore any send errors here -
+                // maybe the remote has disconnected during our processing.
+                for m in v { let _ = c.send(m); };
+            } else if let Some(v) = child_tree.borrow().handle(msg) {
+                for m in v { let _ = c.send(m); };
+            }
+        }
+
+        let now = time::now().to_timespec();
+        if now < last_time + Duration::seconds(30) {
+            continue
+        }
+
+        last_time = now;
+
+        for froyo in &*froyos.borrow() {
+            let mut froyo = froyo.borrow_mut();
+            try!(froyo.handle_thinpool_usage());
             try!(froyo.update_dbus());
             try!(froyo.dump_status());
+            try!(froyo.check_reshape());
         }
-    }
-
-    Ok(())
-}
-
-fn teardown(args: &ArgMatches) -> FroyoResult<()> {
-    let name = args.value_of("froyodevname").unwrap();
-    match try!(Froyo::find(&name)) {
-        Some(mut f) => try!(f.teardown()),
-        None => return Err(FroyoError::Froyo(InternalError(
-            format!("Froyodev \"{}\" not found", name).into()))),
     }
 
     Ok(())
@@ -507,18 +558,18 @@ fn main() {
                          .index(1)
                     )
         )
+        .subcommand(SubCommand::with_name("teardown")
+                    .about("Deactivate a froyodev")
+                    .arg(Arg::with_name("froyodev")
+                         .help("Name of the froyodev")
+                         .required(true)
+                         .index(1)
+                    )
+        )
         .subcommand(SubCommand::with_name("dev")
                     .about("Developer/debug commands")
                     .subcommand(SubCommand::with_name("dump_meta")
                                 .about("Output the JSON metadata for a froyodev")
-                                .arg(Arg::with_name("froyodevname")
-                                     .help("Name of the froyodev")
-                                     .required(true)
-                                     .index(1)
-                                     )
-                                )
-                    .subcommand(SubCommand::with_name("teardown")
-                                .about("Remove the DM mappings for a froyodev")
                                 .arg(Arg::with_name("froyodevname")
                                      .help("Name of the froyodev")
                                      .required(true)
@@ -544,10 +595,10 @@ fn main() {
         ("create", Some(matches)) => create(matches),
         ("rename", Some(matches)) => rename(matches),
         ("destroy", Some(matches)) => destroy(matches),
+        ("teardown", Some(matches)) => teardown(matches),
         ("dev", Some(matches)) => match matches.subcommand() {
             ("dump_meta", Some(matches)) => dump_meta(matches),
             ("dbus_server", Some(matches)) => dbus_server(matches),
-            ("teardown", Some(matches)) => teardown(matches),
             ("", None) => {
                 println!("No command given, try \"help\"");
                 Ok(())

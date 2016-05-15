@@ -10,6 +10,9 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::str::{FromStr, from_utf8};
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
+use std::error::Error;
+use std::cmp::min;
 
 use nix::sys::stat;
 use time::Timespec;
@@ -21,7 +24,8 @@ use bytesize::ByteSize;
 
 use types::{Sectors, SectorOffset, FroyoResult, FroyoError};
 use consts::*;
-use util::{setup_dm_dev, blkdev_size, clear_dev, teardown_dm_dev};
+use util::blkdev_size;
+use dmdevice::DmDevice;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MDA {
@@ -37,7 +41,7 @@ pub struct BlockDevSave {
     pub sectors: Sectors,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlockDev {
     pub froyodev_id: String,
     pub dev: Device,
@@ -213,11 +217,10 @@ impl BlockDev {
         used.push((SectorOffset(*self.sectors - *MDA_ZONE_SECTORS), MDA_ZONE_SECTORS));
 
         for dev in &self.linear_devs {
-            let dev = RefCell::borrow(dev);
-            for seg in &dev.meta_segments {
+            for seg in &dev.borrow().meta_segments {
                 used.push((seg.start, seg.length));
             }
-            for seg in &dev.data_segments {
+            for seg in &dev.borrow().data_segments {
                 used.push((seg.start, seg.length));
             }
         }
@@ -292,7 +295,7 @@ impl BlockDev {
                 format!("Metadata too large for MDA, {} bytes", metadata.len()))))
         }
 
-        older_mda.crc = crc32::checksum_ieee(&metadata);
+        older_mda.crc = crc32::checksum_ieee(metadata);
         older_mda.length = metadata.len() as u32;
         older_mda.last_updated = *time;
 
@@ -345,11 +348,16 @@ impl BlockDev {
 
     fn write_hdr_buf(path: &Path, buf: &[u8; HEADER_SIZE as usize]) -> FroyoResult<()> {
         let mut f = try!(OpenOptions::new().write(true).open(path));
+        let zeroed = [0u8; (SECTOR_SIZE * 8) as usize];
 
-        try!(f.seek(SeekFrom::Start(SECTOR_SIZE)));
+        // Write 4K header to head & tail. Froyo stuff goes in sector 1.
+        try!(f.write_all(&zeroed[..SECTOR_SIZE as usize]));
         try!(f.write_all(buf));
+        try!(f.write_all(&zeroed[(SECTOR_SIZE * 2) as usize..]));
         try!(f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64))));
+        try!(f.write_all(&zeroed[..SECTOR_SIZE as usize]));
         try!(f.write_all(buf));
+        try!(f.write_all(&zeroed[(SECTOR_SIZE * 2) as usize..]));
         try!(f.flush());
 
         Ok(())
@@ -361,30 +369,131 @@ impl BlockDev {
 
         Ok(())
     }
+
+    /// Get the "x:y" device string for this blockdev
+    pub fn dstr(&self) -> String {
+        format!("{}:{}", self.dev.major, self.dev.minor)
+    }
+
+    // Find some sector ranges that could be allocated. If more
+    // sectors are needed than our capacity, return partial results.
+    pub fn get_some_space(&self, size: Sectors) -> (Sectors, Vec<(SectorOffset, Sectors)>) {
+        let mut segs = Vec::new();
+        let mut needed = size;
+
+        for (start, len) in self.avail_areas() {
+            if needed == Sectors(0) { break }
+
+            let to_use = min(needed, len);
+
+            segs.push((start, to_use));
+            needed = needed - to_use;
+        }
+
+        (size - needed, segs)
+    }
 }
 
+#[derive(Debug, Clone)]
+pub struct BlockDevs(pub BTreeMap<String, BlockMember>);
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+impl BlockDevs {
+    pub fn to_save(&self) -> BTreeMap<String, BlockDevSave> {
+        self.0.iter()
+            .map(|(id, bd)| {
+                match *bd {
+                    BlockMember::Present(ref bd) =>
+                        (id.clone(), bd.borrow().to_save()),
+                    BlockMember::Absent(ref sbd) =>
+                        (id.clone(), sbd.clone()),
+                }
+            })
+            .collect()
+    }
+
+    pub fn wipe(&mut self) -> FroyoResult<()> {
+        for bd in self.0.values().filter_map(|bm| bm.present()) {
+            if let Err(e) = bd.borrow_mut().wipe_mda_header() {
+                // keep going!
+                dbgp!("Error when wiping header: {}", e.description());
+            }
+        }
+
+        Ok(())
+    }
+
+    // Unused (non-redundant) space left on blockdevs
+    pub fn unused_space(&self) -> Sectors {
+        self.avail_areas().iter().map(|&(_, _, len)| len).sum::<Sectors>()
+    }
+
+    pub fn avail_areas(&self) -> Vec<(Rc<RefCell<BlockDev>>, SectorOffset, Sectors)> {
+        self.0.values()
+            .filter_map(|bd| bd.present())
+            .map(|bd| {
+                let areas = bd.borrow().avail_areas();
+                areas.into_iter()
+                    .map(|(offset, len)| (bd.clone(), offset, len))
+                    .collect::<Vec<_>>()
+            })
+            .flat_map(|x| x)
+            .collect()
+    }
+
+    pub fn get_linear_segments(&self, size: Sectors)
+                               -> Option<Vec<(Rc<RefCell<BlockDev>>, LinearSegment)>> {
+        let mut needed: Sectors = size;
+        let mut segs = Vec::new();
+
+        for bd in self.0.values()
+            .filter_map(|bm| bm.present())
+        {
+            if needed == Sectors(0) { break }
+
+            let (gotten, r_segs) = bd.borrow().get_some_space(needed);
+            segs.extend(r_segs.iter()
+                        .map(|&(start, len)|
+                             (bd.clone(), LinearSegment::new(start, len))));
+            needed = needed - gotten;
+        }
+
+        match *needed {
+            0 => Some(segs),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct LinearSegment {
     pub start: SectorOffset,
     pub length: Sectors,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl LinearSegment {
+    pub fn new(start: SectorOffset, length: Sectors) -> LinearSegment {
+        LinearSegment {
+            start: start,
+            length: length,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LinearDevSave {
     pub meta_segments: Vec<LinearSegment>,
     pub data_segments: Vec<LinearSegment>,
     pub parent: String,
 }
 
-#[derive(Debug, Clone)]
+// A LinearDev contains two mappings within a single blockdev. This is
+// primarily used for making RaidDevs.
+#[derive(Debug, Clone, PartialEq)]
 pub struct LinearDev {
-    pub meta_dev: Device,
+    pub meta_dev: DmDevice,
     meta_segments: Vec<LinearSegment>,
-    meta_dm_name: String,
-    pub data_dev: Device,
+    pub data_dev: DmDevice,
     data_segments: Vec<LinearSegment>,
-    data_dm_name: String,
     pub parent: Rc<RefCell<BlockDev>>,
 }
 
@@ -398,7 +507,7 @@ impl LinearDev {
         -> FroyoResult<LinearDev> {
 
         let ld = try!(Self::setup(dm, name, blockdev, meta_segments, data_segments));
-        try!(clear_dev(ld.meta_dev));
+        try!(ld.meta_dev.clear());
         Ok(ld)
     }
 
@@ -410,7 +519,7 @@ impl LinearDev {
         data_segments: &[LinearSegment])
         -> FroyoResult<LinearDev> {
 
-        let dev = RefCell::borrow(blockdev).dev;
+        let dev = blockdev.borrow().dev;
 
         // meta
         let mut table = Vec::new();
@@ -423,7 +532,7 @@ impl LinearDev {
         }
 
         let meta_dm_name = format!("froyo-linear-meta-{}", name);
-        let meta_dev = try!(setup_dm_dev(dm, &meta_dm_name, &table));
+        let meta_dev = try!(DmDevice::new(dm, &meta_dm_name, &*table));
 
         // data
         let mut table = Vec::new();
@@ -436,22 +545,20 @@ impl LinearDev {
         }
 
         let data_dm_name = format!("froyo-linear-data-{}", name);
-        let data_dev = try!(setup_dm_dev(dm, &data_dm_name, &table));
+        let data_dev = try!(DmDevice::new(dm, &data_dm_name, &table));
 
         Ok(LinearDev{
             meta_dev: meta_dev,
             meta_segments: meta_segments.to_vec(),
-            meta_dm_name: meta_dm_name,
             data_dev: data_dev,
             data_segments: data_segments.to_vec(),
-            data_dm_name: data_dm_name,
             parent: blockdev.clone(),
         })
     }
 
-    pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
-        try!(teardown_dm_dev(dm, &self.meta_dm_name));
-        try!(teardown_dm_dev(dm, &self.data_dm_name));
+    pub fn teardown(&self, dm: &DM) -> FroyoResult<()> {
+        try!(self.meta_dev.teardown(dm));
+        try!(self.data_dev.teardown(dm));
         Ok(())
     }
 
@@ -459,7 +566,7 @@ impl LinearDev {
         LinearDevSave {
             meta_segments: self.meta_segments.clone(),
             data_segments: self.data_segments.clone(),
-            parent: RefCell::borrow(&self.parent).id.clone(),
+            parent: self.parent.borrow().id.clone(),
         }
     }
 

@@ -7,16 +7,20 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::io;
 use std::io::ErrorKind;
-use std::cmp::min;
 use std::fmt;
 use std::mem;
+use std::cmp::{min, max};
 
-use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
+use uuid::Uuid;
+use devicemapper::DM;
 
-use types::{Sectors, SectorOffset, FroyoError, FroyoResult};
-use blockdev::{LinearDev, LinearDevSave, BlockDev, LinearSegment};
+use froyo::FroyoSave;
+use types::{Sectors, SectorOffset, FroyoError, FroyoResult, InternalError};
+use blockdev::{LinearDev, LinearDevSave, BlockDev, LinearSegment, BlockDevs, BlockMember};
 use consts::*;
-use util::{setup_dm_dev, teardown_dm_dev};
+use dmdevice::DmDevice;
+use mirror::{TempDev};
+use util::align_to;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaidDevSave {
@@ -27,11 +31,10 @@ pub struct RaidDevSave {
     pub members: BTreeMap<String, LinearDevSave>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RaidDev {
     pub id: String,
-    dev: Device,
-    dm_name: String,
+    pub dev: DmDevice,
     pub stripe_sectors: Sectors,
     pub region_sectors: Sectors,
     pub length: Sectors,
@@ -58,7 +61,7 @@ pub enum RaidAction {
     Unknown,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RaidMember {
     Present(Rc<RefCell<LinearDev>>),
     Absent((String, LinearDevSave)),
@@ -76,7 +79,6 @@ impl RaidMember {
 }
 
 impl RaidDev {
-
     fn make_raid_params(
         devs: &[RaidMember],
         stripe: Sectors,
@@ -88,11 +90,9 @@ impl RaidDev {
             .map(|dev|
                  match *dev {
                      RaidMember::Present(ref dev) => {
-                         format!("{}:{} {}:{}",
-                                 RefCell::borrow(dev).meta_dev.major,
-                                 RefCell::borrow(dev).meta_dev.minor,
-                                 RefCell::borrow(dev).data_dev.major,
-                                 RefCell::borrow(dev).data_dev.minor)
+                         format!("{} {}",
+                                 dev.borrow().meta_dev.dstr(),
+                                 dev.borrow().data_dev.dstr())
                      },
                      RaidMember::Absent(_) => "- -".to_owned(),
                      RaidMember::Removed => "- -".to_owned(),
@@ -146,12 +146,11 @@ impl RaidDev {
         let params = Self::make_raid_params(&devs, stripe, region, None);
         let raid_table = [(0u64, *target_length, "raid", params)];
         let dm_name = format!("froyo-raid5-{}-{}", name, id);
-        let raid_dev = try!(setup_dm_dev(dm, &dm_name, &raid_table));
+        let raid_dev = try!(DmDevice::new(dm, &dm_name, &raid_table));
 
         Ok(RaidDev {
             id: id,
             dev: raid_dev,
-            dm_name: dm_name,
             stripe_sectors: stripe,
             region_sectors: region,
             length: target_length,
@@ -161,10 +160,10 @@ impl RaidDev {
     }
 
     pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
-        try!(teardown_dm_dev(dm, &self.dm_name));
+        try!(self.dev.teardown(dm));
         for member in &self.members {
             if let RaidMember::Present(ref linear) = *member {
-                try!(RefCell::borrow_mut(linear).teardown(dm))
+                try!(linear.borrow_mut().teardown(dm))
             }
         }
 
@@ -175,11 +174,7 @@ impl RaidDev {
         let params = Self::make_raid_params(
             &self.members, self.stripe_sectors, self.region_sectors, rebuild);
         let raid_table = [(0u64, *self.length, "raid", params)];
-        let id = &DevId::Name(&self.dm_name);
-
-        try!(dm.table_load(id, &raid_table));
-        try!(dm.device_suspend(id, DM_SUSPEND));
-        try!(dm.device_suspend(id, DmFlags::empty()));
+        try!(self.dev.reload(dm, &raid_table));
 
         Ok(())
     }
@@ -194,7 +189,7 @@ impl RaidDev {
                 .filter_map(|(position, dev)| {
                     match *dev {
                         RaidMember::Present(ref x) =>
-                            Some((position.to_string(), RefCell::borrow(x).to_save())),
+                            Some((position.to_string(), x.borrow().to_save())),
                         RaidMember::Absent((_, ref sld)) =>
                             Some((position.to_string(), sld.clone())),
                         RaidMember::Removed => None,
@@ -204,7 +199,7 @@ impl RaidDev {
         }
     }
 
-    pub fn used_areas(&self)-> Vec<(SectorOffset, Sectors)> {
+    fn used_areas(&self)-> Vec<(SectorOffset, Sectors)> {
         self.used.iter()
             .map(|(key, val)| {
                 (*key, *val)
@@ -232,10 +227,19 @@ impl RaidDev {
         avail_vec
     }
 
-    pub fn avail_sectors(&self) -> Sectors {
+    fn avail_sectors(&self) -> Sectors {
         self.avail_areas().into_iter()
             .map(|(_, len)| len)
             .sum()
+    }
+
+    // Is this raiddev a good one to maybe put more stuff on?
+    pub fn is_safe(&self) -> bool {
+        self.members.iter().all(|rm| rm.present().is_some())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.used.is_empty()
     }
 
     // Find some sector ranges that could be allocated. If more
@@ -245,9 +249,7 @@ impl RaidDev {
         let mut needed = size;
 
         for (start, len) in self.avail_areas() {
-            if needed == Sectors(0) {
-                break
-            }
+            if needed == Sectors(0) { break }
 
             let to_use = min(needed, len);
 
@@ -261,7 +263,7 @@ impl RaidDev {
     pub fn status(&self) -> FroyoResult<(RaidStatus, RaidAction)> {
         let dm = try!(DM::new());
 
-        let (_, mut status) = try!(dm.table_status(&DevId::Name(&self.dm_name), DmFlags::empty()));
+        let mut status = try!(self.dev.table_status(&dm));
 
         if status.len() != 1 {
             return Err(FroyoError::Io(io::Error::new(
@@ -321,7 +323,7 @@ impl RaidDev {
         if let Some(ld) = self.members.iter()
             .filter_map(|rm| rm.present())
             .next() {
-                let ld = RefCell::borrow(&ld);
+                let ld = ld.borrow();
                 return Some((ld.metadata_length(), ld.data_length()));
             }
 
@@ -347,21 +349,16 @@ impl RaidDev {
 
         if let Some(idx) = idx {
             let needed = meta_spc + data_spc;
-            let (offset, len) = RefCell::borrow(blockdev).largest_avail_area()
+            let (offset, len) = blockdev.borrow().largest_avail_area()
                 .unwrap_or((SectorOffset(0), Sectors(0)));
             if len >= needed {
                 let linear = Rc::new(RefCell::new(try!(LinearDev::new(
                     &dm,
                     &format!("{}-{}-{}", froyo_id, self.id, idx),
                     blockdev,
-                    &[LinearSegment {
-                        start: offset,
-                        length: meta_spc,
-                    }],
-                    &[LinearSegment {
-                        start: offset + SectorOffset(*meta_spc),
-                        length: data_spc,
-                    }]))));
+                    &[LinearSegment::new(offset, meta_spc)],
+                    &[LinearSegment::new(offset + SectorOffset(*meta_spc), data_spc)]))));
+
                 blockdev.borrow_mut().linear_devs.push(linear.clone());
                 self.members[idx] = RaidMember::Present(linear);
 
@@ -390,7 +387,7 @@ impl RaidDev {
                     RaidMember::Removed => None,
                 }
             })
-            .filter(|&(_, (ref id, _))| *id == RefCell::borrow(blockdev).id)
+            .filter(|&(_, (ref id, _))| *id == blockdev.borrow().id)
             .next();
 
         if let Some((idx, (_, sld))) = res {
@@ -400,10 +397,381 @@ impl RaidDev {
                 &blockdev,
                 &sld.meta_segments,
                 &sld.data_segments))));
-            RefCell::borrow_mut(blockdev).linear_devs.push(linear.clone());
+            blockdev.borrow_mut().linear_devs.push(linear.clone());
             self.members[idx] = RaidMember::Present(linear);
 
             try!(self.reload(dm, None));
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RaidDevs {
+    pub raids: BTreeMap<String, Rc<RefCell<RaidDev>>>,
+
+    // temp_dev is a linear mapping to non-redundant space. During a
+    // reshape this may be present, and the saved configuration may
+    // refer to it. Basically, when building RaidLinearDevs for the
+    // thinpool meta and data devices, if the thinpooldev segment's
+    // parent uuid doesn't reference a raiddev, we then check the
+    // TempDev. If it's not in either then our saved info is corrupt.
+    pub temp_dev: Option<Rc<RefCell<TempDev>>>,
+}
+
+impl RaidDevs {
+    pub fn new(
+        dm: &DM,
+        name: &str,
+        block_devs: &BlockDevs)
+        -> FroyoResult<RaidDevs> {
+        let mut raid_devs = RaidDevs {
+            raids: BTreeMap::new(),
+            temp_dev: None,
+        };
+
+        try!(raid_devs.create_redundant_zones(dm, name, block_devs));
+
+        Ok(raid_devs)
+    }
+
+    pub fn setup(
+        dm: &DM,
+        froyo_save: &FroyoSave,
+        block_devs: &BlockDevs)
+        -> FroyoResult<RaidDevs> {
+        let mut raid_devs = RaidDevs {
+            raids: BTreeMap::new(),
+            temp_dev: None,
+        };
+        for (id, srd) in &froyo_save.raid_devs {
+            let rd = Rc::new(RefCell::new(try!(Self::setup_raiddev(
+                &dm,
+                &froyo_save.id,
+                id,
+                srd,
+                block_devs))));
+            let id = rd.borrow().id.clone();
+
+            if let (RaidStatus::Failed, _) = try!(rd.borrow().status()) {
+                return Err(FroyoError::Froyo(InternalError(
+                    format!("Froyodev {} has a failed raid",
+                            froyo_save.name).into())))
+            }
+
+            raid_devs.raids.insert(id, rd);
+        }
+
+        if let Some(td) = try!(TempDev::setup(dm, froyo_save, block_devs)) {
+            raid_devs.temp_dev = Some(Rc::new(RefCell::new(td)));
+        }
+
+        Ok(raid_devs)
+    }
+
+    fn setup_raiddev(
+        dm: &DM,
+        froyo_id: &str,
+        raid_id: &str,
+        raid_save: &RaidDevSave,
+        block_devs: &BlockDevs)
+        -> FroyoResult<RaidDev> {
+        let mut linear_devs = Vec::new();
+
+        // Loop through saved struct and setup legs if present in both
+        // the blockdev list and the raid members list
+        for count in 0..raid_save.member_count {
+            match raid_save.members.get(&count.to_string()) {
+                Some(sld) => {
+                    match block_devs.0.get(&sld.parent) {
+                        Some(bm) => {
+                            match *bm {
+                                BlockMember::Present(ref bd) => {
+                                    let ld = Rc::new(RefCell::new(try!(LinearDev::setup(
+                                        &dm,
+                                        &format!("{}-{}-{}", froyo_id, raid_id, count),
+                                        &bd,
+                                        &sld.meta_segments,
+                                        &sld.data_segments))));
+                                    bd.borrow_mut().linear_devs.push(ld.clone());
+                                    linear_devs.push(RaidMember::Present(ld));
+                                },
+                                BlockMember::Absent(_) => {
+                                    dbgp!("Expected device absent from raid {}", raid_id);
+                                    linear_devs.push(
+                                        RaidMember::Absent((sld.parent.clone(),
+                                                            sld.clone())));
+                                },
+                            }
+                        },
+                        None => {
+                            return Err(FroyoError::Io(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("Invalid metadata, raiddev {} references \
+                                         blockdev {} that is not found in \
+                                         blockdev list",
+                                        raid_id, sld.parent))))
+                        },
+                    }
+                },
+                None => {
+                    dbgp!("Raid {} member not present", raid_id);
+                    linear_devs.push(RaidMember::Removed);
+                },
+            }
+        }
+
+        RaidDev::setup(
+            dm,
+            froyo_id,
+            raid_id.to_owned(),
+            linear_devs,
+            raid_save.stripe_sectors,
+            raid_save.region_sectors)
+    }
+
+    pub fn create_redundant_zones(
+        &mut self,
+        dm: &DM,
+        name: &str,
+        block_devs: &BlockDevs)
+        -> FroyoResult<bool> {
+        let mut new_zones = false;
+        while let Some(rd) = try!(
+            self.create_redundant_zone(&dm, name, &block_devs)) {
+            self.raids.insert(rd.id.clone(), Rc::new(RefCell::new(rd)));
+            new_zones = true;
+        }
+
+        Ok(new_zones)
+    }
+
+    // Try to make an as-large-as-possible redundant device from the
+    // given block devices.
+    fn create_redundant_zone(
+        &mut self,
+        dm: &DM,
+        name: &str,
+        block_devs: &BlockDevs)
+        -> FroyoResult<Option<RaidDev>> {
+
+        // get common data area size, allowing for Froyo data at start and end
+        let mut bd_areas: Vec<_> = block_devs.0.values()
+            .filter_map(|bd| bd.present())
+            .filter_map(|bd| {
+                match bd.borrow().largest_avail_area() {
+                    Some(x) => Some((bd.clone(), x.0, x.1)),
+                    None => None,
+                }
+            })
+            .filter(|&(_, _, len)| len >= MIN_DATA_ZONE_SECTORS)
+            .collect();
+
+        // Not enough devs with room for a raid device
+        if bd_areas.len() < 2 {
+            return Ok(None)
+        }
+
+        let common_avail_sectors = bd_areas.iter()
+            .map(|&(_, _, len)| len)
+            .min()
+            .unwrap();
+
+        // Absolute limit on each RAID size.
+        let common_avail_sectors = min(common_avail_sectors, MAX_DATA_ZONE_SECTORS);
+
+        // Also limit size in order to try to create a certain base
+        // number of RAIDs, for reshape shenanigans.
+        // Use size of 2nd largest bdev, which is guaranteed to be
+        // used fully by raids, unlike the largest.
+        let second_largest_bdev = {
+            let mut sizes = block_devs.0.values()
+                .filter_map(|bm| bm.present())
+                .map(|bd| bd.borrow().sectors)
+                .collect::<Vec<_>>();
+            sizes.sort();
+            sizes.pop();
+            sizes.pop().unwrap()
+        };
+        let clamped_size = max(
+            second_largest_bdev / Sectors(IDEAL_RAID_COUNT as u64),
+            MIN_DATA_ZONE_SECTORS);
+        let mut common_avail_sectors = min(common_avail_sectors, clamped_size);
+
+        // Ensure we have enough scratch space to handle a reshape
+        let tot_sectors_left = block_devs.unused_space()
+            - (common_avail_sectors * Sectors(bd_areas.len() as u64));
+        let scratch_shortfall = *self.scratch_needed() as i64
+            - *tot_sectors_left as i64;
+
+        if scratch_shortfall > 0 {
+            common_avail_sectors = common_avail_sectors
+                - Sectors((scratch_shortfall as u64 / bd_areas.len() as u64) + 1);
+            if common_avail_sectors < MIN_DATA_ZONE_SECTORS {
+                return Ok(None)
+            }
+        }
+
+        // Handle raid regions and calc metadata size
+        let (region_count, region_sectors) = {
+            let mut region_sectors = DEFAULT_REGION_SECTORS;
+            while *common_avail_sectors / *region_sectors > MAX_REGIONS {
+                region_sectors = Sectors(*region_sectors * 2);
+            }
+
+            let partial_region = if common_avail_sectors % region_sectors == Sectors(0) {
+                Sectors(0)
+            } else {
+                Sectors(1)
+            };
+
+            (common_avail_sectors / region_sectors + partial_region, region_sectors)
+        };
+
+        // each region needs 1 bit in the write intent bitmap
+        let mdata_sectors = Sectors(align_to(8192 + (*region_count / 8) , SECTOR_SIZE)
+                                         .next_power_of_two()
+                                         / SECTOR_SIZE);
+        // data size must be multiple of stripe size
+        let data_sectors = (common_avail_sectors - mdata_sectors)
+            & Sectors(!(*STRIPE_SECTORS-1));
+
+        let raid_uuid = Uuid::new_v4().to_simple_string();
+
+        let mut linear_devs = Vec::new();
+        for (num, &mut (ref mut bd, sector_start, _)) in bd_areas.iter_mut().enumerate() {
+            let mdata_sector_start = sector_start;
+            let data_sector_start = SectorOffset(*mdata_sector_start + *mdata_sectors);
+
+            let linear = Rc::new(RefCell::new(try!(LinearDev::new(
+                &dm,
+                &format!("{}-{}-{}", name, raid_uuid, num),
+                bd,
+                &[LinearSegment::new(mdata_sector_start, mdata_sectors)],
+                &[LinearSegment::new(data_sector_start, data_sectors)]))));
+
+            bd.borrow_mut().linear_devs.push(linear.clone());
+            linear_devs.push(RaidMember::Present(linear));
+        }
+
+        let raid = try!(RaidDev::setup(
+            &dm,
+            &name,
+            raid_uuid,
+            linear_devs,
+            STRIPE_SECTORS,
+            region_sectors));
+
+        Ok(Some(raid))
+    }
+
+    pub fn alloc_raid_segments(&self, sectors: Sectors) -> Option<Vec<RaidSegment>> {
+        let mut needed = sectors;
+        let mut segs = Vec::new();
+        for rd in self.raids.values() {
+            if needed == Sectors(0) {
+                break
+            }
+            if !rd.borrow().is_safe() {
+                continue
+            }
+            let (gotten, r_segs) = rd.borrow().get_some_space(needed);
+            segs.extend(r_segs.iter()
+                        .map(|&(start, len)|
+                             RaidSegment::new(start, len, RaidLayer::Raid(rd.clone()))));
+            needed = needed - gotten;
+        }
+
+        match *needed {
+            0 => Some(segs),
+            _ => None,
+        }
+    }
+
+    pub fn lookup_segment(&self, id: &str, start: SectorOffset, length: Sectors)
+                          -> Option<RaidSegment> {
+        match self.raids.get(id) {
+            Some(rd) => Some(RaidSegment::new(
+                start, length, RaidLayer::Raid(rd.clone()))),
+            None => {
+                // Before we give up, check the tempdev.
+                if let Some(ref tempdev) = self.temp_dev {
+                    if tempdev.borrow().id == id {
+                        return Some(RaidSegment::new(
+                            start, length, RaidLayer::Temp(tempdev.clone())))
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    // We need scratch space equal to the largest raiddev capacity.
+    fn scratch_needed(&self) -> Sectors {
+        self.raids.values()
+            .map(|rd| rd.borrow().length)
+            .max().unwrap_or_else(|| Sectors(0))
+    }
+
+    pub fn are_idle(&self) -> bool {
+        self.raids.iter()
+            .map(|(_, rd)| {
+                match rd.borrow().status() {
+                    Err(_) => false,
+                    Ok((_, action)) => {
+                        match action {
+                            RaidAction::Idle => true,
+                            _ => false,
+                        }
+                    }
+                }
+            })
+            .all(|res| res)
+    }
+
+    pub fn max_used_raid_sectors(&self) -> Sectors {
+        self.raids.iter()
+            .map(|(_, rd)| {
+                rd.borrow().used_areas().into_iter()
+                    .map(|(_, len)| len)
+                    .sum::<Sectors>()
+            })
+            .max().unwrap_or_else(|| Sectors(0))
+    }
+
+    pub fn avail_space(&self) -> Sectors {
+        self.raids.values()
+            .map(|rd| rd.borrow().avail_sectors())
+            .sum::<Sectors>()
+    }
+
+    pub fn add_new_block_device(&mut self, froyo_id: &str, blockdev: &Rc<RefCell<BlockDev>>)
+                                -> FroyoResult<()> {
+        let dm = try!(DM::new());
+
+        // let existing raids know about the new disk, maybe they're degraded
+        for (_, raid) in &mut self.raids {
+            try!(raid.borrow_mut().new_block_device_added(&dm, froyo_id, &blockdev));
+        }
+
+        Ok(())
+    }
+
+    pub fn add_existing_block_device(&mut self, froyo_id: &str, blockdev: &Rc<RefCell<BlockDev>>)
+                                 -> FroyoResult<()> {
+        let dm = try!(DM::new());
+
+        for (_, raid) in &mut self.raids {
+            try!(raid.borrow_mut().block_device_found(&dm, froyo_id, &blockdev));
+        }
+
+        Ok(())
+    }
+
+    pub fn teardown(&self, dm: &DM) -> FroyoResult<()> {
+        for raid in &mut self.raids.values() {
+            try!(raid.borrow_mut().teardown(&dm))
         }
 
         Ok(())
@@ -417,34 +785,79 @@ pub struct RaidSegmentSave {
     pub parent: String,  // RaidDev id
 }
 
-#[derive(Clone)]
+// A RaidSegment will almost always be on a RaidDev, unless we're
+// reshaping and we had to temporarily copy it to a temp area.
+#[derive(Debug, Clone)]
+pub enum RaidLayer {
+    Temp(Rc<RefCell<TempDev>>),
+    Raid(Rc<RefCell<RaidDev>>),
+}
+
+impl RaidLayer {
+    pub fn dstr(&self) -> String {
+        match *self {
+            RaidLayer::Temp(ref td) => td.borrow().dstr(),
+            RaidLayer::Raid(ref rd) => rd.borrow().dev.dstr(),
+        }
+    }
+
+    pub fn on_temp(&self) -> bool {
+        if let RaidLayer::Temp(_) = *self { true } else { false }
+    }
+
+    pub fn raid(&self) -> Rc<RefCell<RaidDev>> {
+        match *self {
+            RaidLayer::Raid(ref rd) => rd.clone(),
+            _ => panic!("should never happen"),
+        }
+    }
+
+    pub fn id(&self) -> String {
+        match *self {
+            RaidLayer::Temp(ref td) => td.borrow().id.to_owned(),
+            RaidLayer::Raid(ref rd) => rd.borrow().id.to_owned(),
+        }
+    }
+}
+
+// Not Clone, b/c that would mess up our parent.used stuff
 pub struct RaidSegment {
     pub start: SectorOffset,
     pub length: Sectors,
-    pub parent: Rc<RefCell<RaidDev>>,
+    pub parent: RaidLayer,
 }
 
+// The derived Debug ends up recursing, so do this instead
 impl fmt::Debug for RaidSegment {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "({}, {}, {})", *self.start, *self.length,
-               RefCell::borrow(&self.parent).id)
+        match self.parent {
+            RaidLayer::Temp(ref p) => write!(f, "(temp {}, {}, {})",
+                                             *self.start, *self.length,
+                                             p.borrow().dstr()),
+            RaidLayer::Raid(ref p) => write!(f, "(raid {}, {}, {})",
+                                            *self.start, *self.length,
+                                            p.borrow().id),
+        }
     }
 }
 
 impl RaidSegment {
-    pub fn new(start: SectorOffset, length: Sectors, parent: &Rc<RefCell<RaidDev>>)
+    pub fn new(start: SectorOffset, length: Sectors, parent: RaidLayer)
                -> RaidSegment {
-        RefCell::borrow_mut(parent).used.insert(start, length);
+        if let RaidLayer::Raid(ref rd) = parent {
+            rd.borrow_mut().used.insert(start, length);
+        }
         RaidSegment {
             start: start,
             length: length,
-            parent: parent.clone(),
+            parent: parent,
         }
     }
 
     // Also update the used map over in self.parent.used.
-    fn update_length(&mut self, length: Sectors) {
-        let mut parent = RefCell::borrow_mut(&self.parent);
+    pub fn update_length(&mut self, length: Sectors) {
+        let rd = self.parent.raid();
+        let mut parent = rd.borrow_mut();
         let entry = parent.used.get_mut(&self.start).unwrap();
         mem::replace(entry, length);
         self.length = length;
@@ -454,14 +867,19 @@ impl RaidSegment {
         RaidSegmentSave {
             start: self.start,
             length: self.length,
-            parent: RefCell::borrow(&self.parent).id.clone(),
+            parent: self.parent.id(),
         }
     }
 }
 
 impl Drop for RaidSegment {
     fn drop(&mut self) {
-        self.parent.borrow_mut().used.remove(&self.start);
+        match self.parent {
+            RaidLayer::Raid(ref rd) => {
+                rd.borrow_mut().used.remove(&self.start);
+            },
+            RaidLayer::Temp(_) => {},
+        };
     }
 }
 
@@ -471,11 +889,10 @@ pub struct RaidLinearDevSave {
     pub segments: Vec<RaidSegmentSave>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RaidLinearDev {
     id: String,
-    pub dm_name: String,
-    pub dev: Device,
+    pub dev: DmDevice,
     pub segments: Vec<RaidSegment>,
 }
 
@@ -485,11 +902,9 @@ impl RaidLinearDev {
         let mut table = Vec::new();
         let mut offset = SectorOffset(0);
         for seg in segments {
+            let dstr = seg.parent.dstr();
             let line = (*offset, *seg.length, "linear".to_owned(),
-                        format!("{}:{} {}",
-                                RefCell::borrow(&seg.parent).dev.major,
-                                RefCell::borrow(&seg.parent).dev.minor,
-                                *seg.start));
+                        format!("{} {}", dstr, *seg.start));
             table.push(line);
             offset = offset + SectorOffset(*seg.length);
         }
@@ -509,18 +924,19 @@ impl RaidLinearDev {
 
         let table = Self::dm_table(&segments);
         let dm_name = format!("froyo-raid-linear-{}", name);
-        let linear_dev = try!(setup_dm_dev(dm, &dm_name, &table));
+        let linear_dev = try!(DmDevice::new(dm, &dm_name, &table));
 
         Ok(RaidLinearDev {
             id: id.to_owned(),
-            dm_name: dm_name,
             dev: linear_dev,
             segments: segments,
         })
     }
 
     pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
-        teardown_dm_dev(dm, &self.dm_name)
+        try!(self.dev.teardown(dm));
+
+        Ok(())
     }
 
     pub fn to_save(&self) -> RaidLinearDevSave {
@@ -544,7 +960,7 @@ impl RaidLinearDev {
             let mut old_last = self.segments.last_mut().unwrap();
             let new_first = segs.first().unwrap();
             let mut coal = false;
-            if old_last.parent.borrow().id == new_first.parent.borrow().id
+            if old_last.parent.id() == new_first.parent.id()
                 && (old_last.start + SectorOffset(*old_last.length)
                     == new_first.start) {
                     let new_len = old_last.length + new_first.length;
@@ -563,11 +979,7 @@ impl RaidLinearDev {
         let table = RaidLinearDev::dm_table(&self.segments);
 
         let dm = try!(DM::new());
-        let id = &DevId::Name(&self.dm_name);
-
-        try!(dm.table_load(id, &table));
-        try!(dm.device_suspend(id, DM_SUSPEND));
-        try!(dm.device_suspend(id, DmFlags::empty()));
+        try!(self.dev.reload(&dm, &table));
 
         Ok(())
     }
@@ -576,8 +988,9 @@ impl RaidLinearDev {
         let mut map = BTreeMap::new();
 
         for rs in &self.segments {
-            let id = RefCell::borrow(&*rs.parent).id.clone();
-            map.insert(id, rs.parent.clone());
+            if !rs.parent.on_temp() {
+                map.insert(rs.parent.id(), rs.parent.raid().clone());
+            }
         }
 
         map
