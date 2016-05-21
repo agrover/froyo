@@ -14,8 +14,10 @@ Drobo + Free + You = Froyo!
 
 Currently requires using [Rust nightly compiler](https://doc.rust-lang.org/book/nightly-rust.html).
 
-As of May 14, use nightly. If using Multirust/Rustup, run `multirust override nightly` in
-the `froyo` directory.
+The last verified working nightly snapshot was 2016-05-15. If using
+Multirust, run `multirust override nightly-2016-05-15` in the `froyo`
+directory to use this snapshot for Froyo. If using Rustup, see its
+docs for how to accomplish the same thing.
 
 ### Dev Resources
 
