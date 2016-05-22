@@ -86,6 +86,7 @@ impl DmDevice {
     }
 
     pub fn teardown(&self, dm: &DM) -> FroyoResult<()> {
+        dbgp!("tearing down {}", self.dm_name);
         try!(dm.device_remove(&DevId::Name(&self.dm_name), DmFlags::empty()));
 
         Ok(())
