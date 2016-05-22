@@ -1265,7 +1265,11 @@ impl<'a> Froyo<'a> {
     // Start copying back from scratch space to redundant space
     fn start_copy_from_scratch(&mut self, dest: Rc<RefCell<RaidLinearDev>>)
                                -> FroyoResult<ReshapeState> {
-        let src_dev = self.raid_devs.temp_dev.take().unwrap();
+        let src_dev = match self.raid_devs.temp_dev.take() {
+            Some(td) => td,
+            None => return Ok(ReshapeState::Idle),
+        };
+
         let len = src_dev.borrow().length();
         let raid_segs = try!(
             self.raid_devs.alloc_raid_segments(len)
