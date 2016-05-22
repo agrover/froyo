@@ -55,4 +55,4 @@ pub const TPOOL_INITIAL_META_SECTORS: Sectors = Sectors(4 * MEGA / SECTOR_SIZE);
 pub const TPOOL_INITIAL_DATA_SECTORS: Sectors = Sectors(2 * GIGA / SECTOR_SIZE);
 pub const TPOOL_EXTEND_SECTORS: Sectors = Sectors(GIGA / SECTOR_SIZE);
 
-pub const THIN_INITIAL_SECTORS: Sectors = Sectors(TERA / SECTOR_SIZE);
+pub const THIN_INITIAL_SECTORS: Sectors = Sectors(128 * GIGA / SECTOR_SIZE);
