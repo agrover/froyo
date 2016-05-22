@@ -267,6 +267,14 @@ pub fn get_base_tree<'a>(
         let obj_path = f.object_path(path.clone())
             .introspectable()
             .add(froyo_interface(&froyo));
+
+        try!(froyo.borrow().update_dbus()
+             .map_err(|err| {
+                 let msg = format!("Updating DBus failed: {}",
+                                   err.description());
+                 MethodErr::failed(&msg)
+             }));
+
         try!(c.register_object_path(&path)
              .map_err(|err| {
                  let msg = format!("registering object path failed: {}",

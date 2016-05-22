@@ -75,7 +75,8 @@ issue with a particular area:
 |10   |ThinPool failure - Data. Something is wrong with the thinpool data device.
 |11   |Thin volume failure. An error occurred when creating the thin volume.
 |12   |Filesystem failure. The filesystem has experienced a failure.
-|13-31|Reserved or unenumerated failure.
+|13   |Initializing. Not online because it is still initializing.
+|14-31|Reserved or unenumerated failure.
 
 `RunningStatus` is also returned, but will only be valid if
 `Status` is 0 -- that is, if the Froyodev is started. If

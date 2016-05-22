@@ -43,7 +43,45 @@ pub struct FroyoSave {
 }
 
 #[derive(Debug, Clone)]
-enum ReshapeState {
+pub struct Froyo<'a> {
+    pub id: String,
+    pub name: String,
+    pub block_devs: BlockDevs,
+    raid_devs: RaidDevs,
+    thin_pool_dev: ThinPoolDev,
+    thin_devs: Vec<ThinDev>,
+    throttled: bool,
+    last_state: FroyoState,
+    pub dbus_context: Option<DbusContext<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FroyoState {
+    Initializing,
+    Good(FroyoRunningState),
+    RaidFailed,
+    ThinPoolFailed,
+    ThinFailed,
+}
+
+impl FroyoState {
+    pub fn is_reshaping(&self) -> bool {
+        match *self {
+            FroyoState::Good(FroyoRunningState::Reshaping(_)) => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum FroyoRunningState {
+    Good,
+    Reshaping(ReshapeState),
+    Degraded(u8),
+}
+
+#[derive(Debug, Clone)]
+pub enum ReshapeState {
     Off,
     Idle,
     CopyingToRaid(MirrorDev),
@@ -53,48 +91,13 @@ enum ReshapeState {
 }
 
 impl ReshapeState {
-    pub fn is_reshaping(&self) -> bool {
-        match *self {
-            ReshapeState::Off => false,
-            _ => true,
-        }
-    }
-
     pub fn is_busy(&self) -> bool {
         match *self {
-            ReshapeState::Off => false,
+            ReshapeState::Off => panic!("should never happen"),
             ReshapeState::Idle => false,
             _ => true,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Froyo<'a> {
-    pub id: String,
-    pub name: String,
-    pub block_devs: BlockDevs,
-    raid_devs: RaidDevs,
-    thin_pool_dev: ThinPoolDev,
-    thin_devs: Vec<ThinDev>,
-    throttled: bool,
-    reshaping: ReshapeState,
-    pub dbus_context: Option<DbusContext<'a>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum FroyoStatus {
-    Good(FroyoRunningStatus),
-    RaidFailed,
-    ThinPoolFailed,
-    ThinFailed,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum FroyoRunningStatus {
-    Good,
-    Degraded(u8),
-    Throttled,
 }
 
 impl<'a> Froyo<'a> {
@@ -142,27 +145,36 @@ impl<'a> Froyo<'a> {
         let thin_pool_dev = try!(ThinPoolDev::new(
             &dm, &froyo_id, meta_raid_segments, data_raid_segments));
 
-        let mut thin_devs = Vec::new();
-        // Create an initial 1TB thin dev
-        thin_devs.push(try!(ThinDev::new(
-            &dm,
-            &froyo_id,
-            name, // 1st thindev name same as froyodev name
-            0,
-            THIN_INITIAL_SECTORS,
-            &thin_pool_dev)));
-
         Ok(Froyo {
             name: name.to_owned(),
             id: froyo_id,
             block_devs: block_devs,
             raid_devs: raid_devs,
             thin_pool_dev: thin_pool_dev,
-            thin_devs: thin_devs,
+            thin_devs: Vec::new(),
             throttled: false,
-            reshaping: ReshapeState::Off,
+            last_state: FroyoState::Initializing,
             dbus_context: None,
         })
+    }
+
+    fn initial_resync_complete(&mut self) -> FroyoResult<()> {
+        let dm = try!(DM::new());
+
+        dbgp!("initial resync complete, creating thin dev");
+
+        // Create an initial 1TB thin dev
+        self.thin_devs.push(try!(ThinDev::new(
+            &dm,
+            &self.id,
+            &self.name, // 1st thindev name same as froyodev name
+            0,
+            THIN_INITIAL_SECTORS,
+            &self.thin_pool_dev)));
+
+        self.last_state = FroyoState::Good(FroyoRunningState::Good);
+
+        Ok(())
     }
 
     fn to_save(&self) -> FroyoSave {
@@ -348,7 +360,7 @@ impl<'a> Froyo<'a> {
                 &thin_pool_dev)));
         }
 
-        Ok(Froyo {
+        let mut froyo = Froyo {
             name: froyo_save.name.to_owned(),
             id: froyo_id.to_owned(),
             block_devs: block_devs,
@@ -356,9 +368,13 @@ impl<'a> Froyo<'a> {
             thin_pool_dev: thin_pool_dev,
             thin_devs: thin_devs,
             throttled: false,
-            reshaping: ReshapeState::Off,
+            last_state: FroyoState::Good(FroyoRunningState::Good),
             dbus_context: None,
-        })
+        };
+
+        try!(froyo.check_state());
+
+        Ok(froyo)
     }
 
     pub fn teardown(&mut self) -> FroyoResult<()> {
@@ -388,37 +404,49 @@ impl<'a> Froyo<'a> {
         Ok(())
     }
 
-    pub fn status(&self)
-                  -> FroyoResult<FroyoStatus> {
+    pub fn status(&self) -> FroyoResult<FroyoState> {
         let mut degraded = 0;
         for rd in self.raid_devs.raids.values() {
-            let (r_status, _) = try!(rd.borrow().status());
+            let (r_status, r_action) = try!(rd.borrow().status());
             match r_status {
-                RaidStatus::Failed => return Ok(FroyoStatus::RaidFailed),
+                RaidStatus::Failed => return Ok(FroyoState::RaidFailed),
                 RaidStatus::Degraded(x) => degraded = max(degraded, x as u8),
-                RaidStatus::Good => {},
+                RaidStatus::Good => if let RaidAction::Resync = r_action {
+                    return Ok(FroyoState::Initializing)
+                },
             }
         }
 
         if let ThinPoolStatus::Fail = try!(self.thin_pool_dev.status()) {
-            return Ok(FroyoStatus::ThinPoolFailed)
+            return Ok(FroyoState::ThinPoolFailed)
         }
 
-        if let ThinStatus::Fail = try!(self.thin_devs[0].status()) {
-            return Ok(FroyoStatus::ThinFailed)
-        }
-
-        let working_status = {
-            if degraded != 0 {
-                FroyoRunningStatus::Degraded(degraded)
-            } else if self.throttled {
-                FroyoRunningStatus::Throttled
-            } else {
-                FroyoRunningStatus::Good
+        if let Some(td) = self.thin_devs.get(0) {
+            if let ThinStatus::Fail = try!(td.status()) {
+                return Ok(FroyoState::ThinFailed)
             }
+        }
+
+        // If reshaping, report that instead of the fact that some
+        // raid reports degraded
+        let cur_running_state = match self.last_state {
+            FroyoState::Good(ref running_state) =>  {
+                match running_state {
+                    s @ &FroyoRunningState::Reshaping(_) => s.clone(),
+                    _ => {
+                        if degraded > 0 {
+                            FroyoRunningState::Degraded(degraded)
+                        } else {
+                            FroyoRunningState::Good
+                        }
+                    },
+                }
+            },
+            FroyoState::Initializing => FroyoRunningState::Good,
+            _ => panic!("last_state should always transition to Good(_)"),
         };
 
-        Ok(FroyoStatus::Good(working_status))
+        Ok(FroyoState::Good(cur_running_state))
     }
 
     // Get how much RAIDed space there is available. This consists of
@@ -491,35 +519,39 @@ impl<'a> Froyo<'a> {
         if let Some(ref dc) = self.dbus_context {
             let remaining = try!(self.avail_redundant_space());
             try!(DbusContext::update_one(&dc.remaining_prop, (*remaining).into()));
-            let total = self.raid_devs.avail_space();
+            let total = self.raid_devs.total_space();
             try!(DbusContext::update_one(&dc.total_prop, (*total).into()));
+
 
             // TODO: self.status() is not returning all status we can
             // report via dbus, and they're also mutually exclusive,
             // but dbus is not. If we inline that in this fn, that
             // might make this easier to achieve.
             let (status, mut r_status): (u32,u32) = match try!(self.status()) {
-                FroyoStatus::RaidFailed => (0x100, 0),
-                FroyoStatus::ThinPoolFailed => (0x200, 0),
-                FroyoStatus::ThinFailed => (0x400, 0),
-                FroyoStatus::Good(rs) => match rs {
-                    FroyoRunningStatus::Degraded(x) => {
+                FroyoState::RaidFailed => (0x100, 0),
+                FroyoState::ThinPoolFailed => (0x200, 0),
+                FroyoState::ThinFailed => (0x400, 0),
+                FroyoState::Initializing => (0x2000, 0),
+                FroyoState::Good(rs) => match rs {
+                    FroyoRunningState::Degraded(x) => {
                         if x as usize >= REDUNDANCY {
                             (0, x as u32 | 0x100) // set "non-redundant" bit
                         } else {
                             (0, x as u32)
                         }
                     },
-                    FroyoRunningStatus::Throttled => (0, 0x800), // set "throttled" bit
-                    FroyoRunningStatus::Good => (0, 0),
+                    FroyoRunningState::Reshaping(_) => (0, 0x400),
+                    FroyoRunningState::Good => (0, 0),
                 },
             };
+
             if !self.is_reshapable() {
                 r_status |= 0x200; // set "cannot reshape" bit
             }
-            if !self.reshaping.is_reshaping() {
-                r_status |= 0x400; // set "reshaping" bit
+            if self.throttled {
+                r_status |= 0x800; // set "throttled" bit
             }
+
             try!(DbusContext::update_one(&dc.status_prop, status.into()));
             try!(DbusContext::update_one(&dc.running_status_prop, r_status.into()));
 
@@ -881,7 +913,7 @@ impl<'a> Froyo<'a> {
     // RaidLinearDev) while a reshape is ongoing. Temporary
     // allocations are not tracked and would likely double-allocate.
     //
-    fn state_machine(&mut self, state: ReshapeState) -> FroyoResult<ReshapeState> {
+    fn reshape_state_machine(&mut self, state: ReshapeState) -> FroyoResult<ReshapeState> {
         match state {
             ReshapeState::Off => Ok(ReshapeState::Off),
             ReshapeState::CopyingToRaid(mir) => self.check_raidcopy(mir),
@@ -947,17 +979,43 @@ impl<'a> Froyo<'a> {
         //
         // thinpool extend needed while reshape? cancel reshape. (how?)
         //
-        self.reshaping = try!(self.state_machine(ReshapeState::Idle));
+        dbgp!("starting reshaping!");
+        self.last_state = match try!(self.reshape_state_machine(ReshapeState::Idle)) {
+            ReshapeState::Off => FroyoState::Good(FroyoRunningState::Good),
+            x => FroyoState::Good(FroyoRunningState::Reshaping(x)),
+        };
 
         Ok(())
     }
 
-    pub fn check_reshape(&mut self) -> FroyoResult<()> {
-        if self.reshaping.is_reshaping() {
-            dbgp!("reshaping! {:#?}", self.reshaping);
-            let state = self.reshaping.clone();
-            self.reshaping = try!(self.state_machine(state));
+    pub fn check_state(&mut self) -> FroyoResult<()> {
+
+        if let FroyoState::Initializing = self.last_state {
+            let cur_state = try!(self.status());
+
+            if let FroyoState::Good(_) = cur_state {
+                try!(self.initial_resync_complete());
+            }
+
+            return Ok(())
         }
+
+        // TODO: simplify this once Rust has non-lexical closures
+        // (can't set self.last_state within a match on self.last_state)
+        let r_state = match self.last_state {
+            FroyoState::Good(FroyoRunningState::Reshaping(ref state)) => {
+                Some(state.clone())
+            }
+            _ => None,
+        };
+
+        if let Some(state) = r_state {
+            dbgp!("reshaping! {:#?}", state);
+            self.last_state = match try!(self.reshape_state_machine(state)) {
+                ReshapeState::Off => FroyoState::Good(FroyoRunningState::Good),
+                x => FroyoState::Good(FroyoRunningState::Reshaping(x)),
+            };
+        };
 
         Ok(())
     }
@@ -1252,7 +1310,7 @@ impl<'a> Froyo<'a> {
 
     pub fn handle_thinpool_usage(&mut self) -> FroyoResult<()> {
 
-        if self.reshaping.is_reshaping() {
+        if self.last_state.is_reshaping() {
             // TODO: if we're getting low on space, start using
             // dm-delay so we don't run out of space while we're
             // reshaping

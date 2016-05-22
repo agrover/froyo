@@ -178,6 +178,7 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
             if 0x400 & status != 0 { stats.push("Thin pool failure: data".into()) }
             if 0x800 & status != 0 { stats.push("Thin device failure".into()) }
             if 0x1000 & status != 0 { stats.push("Filesystem failure".into()) }
+            if 0x2000 & status != 0 { stats.push("Initializing".into()) }
 	    if stats.is_empty() {
                 stats.push(format!("Unenumerated failure: {:x}", status).into())
             }
@@ -205,7 +206,7 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
     let space: u64 = FromMessageItem::from(&space_msg).unwrap();
     let space = space * SECTOR_SIZE;
 
-    let total_msg = try!(p.get("RemainingSectors"));
+    let total_msg = try!(p.get("TotalSectors"));
     let total: u64 = FromMessageItem::from(&total_msg).unwrap();
     let total = total * SECTOR_SIZE;
 
@@ -439,7 +440,7 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
             try!(froyo.handle_thinpool_usage());
             try!(froyo.update_dbus());
             try!(froyo.dump_status());
-            try!(froyo.check_reshape());
+            try!(froyo.check_state());
         }
     }
 

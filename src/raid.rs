@@ -746,6 +746,12 @@ impl RaidDevs {
             .sum::<Sectors>()
     }
 
+    pub fn total_space(&self) -> Sectors {
+        self.raids.values()
+            .map(|rd| rd.borrow().length)
+            .sum::<Sectors>()
+    }
+
     pub fn add_new_block_device(&mut self, froyo_id: &str, blockdev: &Rc<RefCell<BlockDev>>)
                                 -> FroyoResult<()> {
         let dm = try!(DM::new());
