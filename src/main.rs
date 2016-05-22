@@ -348,6 +348,24 @@ fn rename(args: &ArgMatches) -> FroyoResult<()> {
     Ok(())
 }
 
+fn reshape(args: &ArgMatches) -> FroyoResult<()> {
+    let name = args.value_of("froyodev").unwrap();
+
+    let c = try!(Connection::froyo_connect());
+    let fpath = try!(c.froyo_path(name));
+
+    let m = Message::new_method_call(
+        "org.freedesktop.Froyo1",
+        &fpath,
+        "org.freedesktop.FroyoDevice1",
+        "Reshape").unwrap();
+    try!(c.send_with_reply_and_block(m, DBUS_TIMEOUT));
+
+    dbgp!("Froyodev {} starting reshape", name);
+
+    Ok(())
+}
+
 fn destroy(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodev").unwrap();
 
@@ -559,6 +577,14 @@ fn main() {
                          .index(1)
                     )
         )
+        .subcommand(SubCommand::with_name("reshape")
+                    .about("Manually start a reshape")
+                    .arg(Arg::with_name("froyodev")
+                         .help("Froyodev to reshape")
+                         .required(true)
+                         .index(1)
+                    )
+        )
         .subcommand(SubCommand::with_name("teardown")
                     .about("Deactivate a froyodev")
                     .arg(Arg::with_name("froyodev")
@@ -596,6 +622,7 @@ fn main() {
         ("create", Some(matches)) => create(matches),
         ("rename", Some(matches)) => rename(matches),
         ("destroy", Some(matches)) => destroy(matches),
+        ("reshape", Some(matches)) => reshape(matches),
         ("teardown", Some(matches)) => teardown(matches),
         ("dev", Some(matches)) => match matches.subcommand() {
             ("dump_meta", Some(matches)) => dump_meta(matches),
