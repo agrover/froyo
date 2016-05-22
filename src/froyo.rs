@@ -174,6 +174,8 @@ impl<'a> Froyo<'a> {
 
         self.last_state = FroyoState::Good(FroyoRunningState::Good);
 
+        try!(self.save_state());
+
         Ok(())
     }
 
