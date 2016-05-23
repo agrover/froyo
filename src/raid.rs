@@ -170,6 +170,20 @@ impl RaidDev {
         Ok(())
     }
 
+    pub fn destroy(&mut self, dm: &DM) -> FroyoResult<()> {
+        try!(self.dev.teardown(dm));
+        for member in &self.members {
+            if let RaidMember::Present(ref linear) = *member {
+                let linear = linear.borrow_mut();
+                try!(linear.teardown(dm));
+                linear.parent.borrow_mut().linear_devs.remove(
+                    &linear.meta_dev.dm_name);
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn reload(&mut self, dm: &DM, rebuild: Option<usize>) -> FroyoResult<()> {
         let params = Self::make_raid_params(
             &self.members, self.stripe_sectors, self.region_sectors, rebuild);
@@ -359,7 +373,8 @@ impl RaidDev {
                     &[LinearSegment::new(offset, meta_spc)],
                     &[LinearSegment::new(offset + SectorOffset(*meta_spc), data_spc)]))));
 
-                blockdev.borrow_mut().linear_devs.push(linear.clone());
+                blockdev.borrow_mut().linear_devs.insert(
+                    linear.borrow().meta_dev.dm_name.clone(), linear.clone());
                 self.members[idx] = RaidMember::Present(linear);
 
                 try!(self.reload(dm, Some(idx)));
@@ -397,7 +412,9 @@ impl RaidDev {
                 &blockdev,
                 &sld.meta_segments,
                 &sld.data_segments))));
-            blockdev.borrow_mut().linear_devs.push(linear.clone());
+
+            blockdev.borrow_mut().linear_devs.insert(
+                linear.borrow().meta_dev.dm_name.clone(), linear.clone());
             self.members[idx] = RaidMember::Present(linear);
 
             try!(self.reload(dm, None));
@@ -494,7 +511,9 @@ impl RaidDevs {
                                         &bd,
                                         &sld.meta_segments,
                                         &sld.data_segments))));
-                                    bd.borrow_mut().linear_devs.push(ld.clone());
+                                    bd.borrow_mut().linear_devs.insert(
+                                        ld.borrow().meta_dev.dm_name.clone(),
+                                        ld.clone());
                                     linear_devs.push(RaidMember::Present(ld));
                                 },
                                 BlockMember::Absent(_) => {
@@ -642,7 +661,10 @@ impl RaidDevs {
                 &[LinearSegment::new(mdata_sector_start, mdata_sectors)],
                 &[LinearSegment::new(data_sector_start, data_sectors)]))));
 
-            bd.borrow_mut().linear_devs.push(linear.clone());
+            bd.borrow_mut().linear_devs.insert(
+                linear.borrow().meta_dev.dm_name.clone(),
+                linear.clone());
+
             linear_devs.push(RaidMember::Present(linear));
         }
 

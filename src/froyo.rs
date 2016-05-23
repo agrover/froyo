@@ -1109,7 +1109,7 @@ impl<'a> Froyo<'a> {
         for (id, rd) in &mut self.raid_devs.raids {
             let mut rd = rd.borrow_mut();
             if rd.is_empty() && !rd.is_safe() {
-                try!(rd.teardown(&dm));
+                try!(rd.destroy(&dm));
                 removed.push(id.clone());
             }
         }

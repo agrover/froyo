@@ -50,7 +50,8 @@ pub struct BlockDev {
     pub sectors: Sectors,
     pub mdaa: MDA,
     pub mdab: MDA,
-    pub linear_devs: Vec<Rc<RefCell<LinearDev>>>,
+    // Key is meta_dev dm name
+    pub linear_devs: BTreeMap<String, Rc<RefCell<LinearDev>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +127,7 @@ impl BlockDev {
                 crc: 0,
                 offset: MDAB_ZONE_OFFSET,
             },
-            linear_devs: Vec::new(),
+            linear_devs: BTreeMap::new(),
         };
 
         try!(bd.write_mda_header());
@@ -189,7 +190,7 @@ impl BlockDev {
                 crc: LittleEndian::read_u32(&buf[112..116]),
                 offset: MDAB_ZONE_OFFSET,
             },
-            linear_devs: Vec::new(), // Not initialized until metadata is read
+            linear_devs: BTreeMap::new(), // Not initialized until metadata is read
         })
     }
 
@@ -216,7 +217,7 @@ impl BlockDev {
         used.push((SectorOffset(0), MDA_ZONE_SECTORS));
         used.push((SectorOffset(*self.sectors - *MDA_ZONE_SECTORS), MDA_ZONE_SECTORS));
 
-        for dev in &self.linear_devs {
+        for dev in self.linear_devs.values() {
             for seg in &dev.borrow().meta_segments {
                 used.push((seg.start, seg.length));
             }
