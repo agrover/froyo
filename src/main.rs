@@ -189,7 +189,11 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
                 stats.push(format!("missing {} blockdevs", r_status & 0xff).into())
             }
             if 0x100 & r_status != 0 { stats.push("Non-redundant".into()) }
-            if 0x200 & r_status != 0 { stats.push("Cannot reshape".into()) }
+            if 0x200 & r_status != 0 {
+                stats.push("Cannot reshape".into())
+            } else {
+                stats.push("Can reshape".into())
+            }
             if 0x400 & r_status != 0 { stats.push("Reshaping".into()) }
             if 0x800 & r_status != 0 { stats.push("Throttled".into()) }
             if stats.is_empty() { stats.push(
