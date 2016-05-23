@@ -741,31 +741,37 @@ impl<'a> Froyo<'a> {
             return Ok(ReshapeState::CopyingToRaid(mirror))
         }
 
-        // Syncing done! Switch to the fresh copy
-        let mut rld = mirror.linear_dev.borrow_mut();
+        {
+            // Syncing done! Switch to the fresh copy
+            // Can't call save_state below with the rld still borrowed
+            let mut rld = mirror.linear_dev.borrow_mut();
 
-        try!(rld.dev.suspend(&dm));
-        try!(mirror.teardown(&dm));
+            try!(rld.dev.suspend(&dm));
 
-        // splice the new location(s) into the RLD's list...
-        // for raid->raid, there will only be one raidseg mirrored at
-        // once.
-        let idx = mirror.linear_dev_idxs[0];
-        let mut rld_tail = rld.segments.split_off(idx);
-        for &(ref dl, seg) in &mirror.dest.borrow().segments {
-            rld.segments.push(
-                RaidSegment::new(seg.start, seg.length, RaidLayer::Raid(dl.raid())));
+            // splice the new location(s) into the RLD's list...
+            // for raid->raid, there will only be one raidseg mirrored at
+            // once.
+            let idx = mirror.linear_dev_idxs[0];
+            let mut rld_tail = rld.segments.split_off(idx);
+            for &(ref dl, seg) in &mirror.dest.borrow().segments {
+                rld.segments.push(
+                    RaidSegment::new(seg.start, seg.length, RaidLayer::Raid(dl.raid())));
+            }
+            // remove the raidsegment we just synced...
+            rld_tail.remove(0);
+            // Put the rest back on the end
+            rld.segments.extend(rld_tail);
         }
-        // remove the raidsegment we just synced...
-        rld_tail.remove(0);
-        // Put the rest back on the end
-        rld.segments.extend(rld_tail);
 
         try!(self.save_state());
+
+        let rld = mirror.linear_dev.borrow();
 
         let table = RaidLinearDev::dm_table(&rld.segments);
         try!(rld.dev.table_load(&dm, &table));
         try!(rld.dev.unsuspend(&dm));
+
+        try!(mirror.teardown(&dm));
 
         Ok(ReshapeState::Idle)
     }
@@ -780,49 +786,55 @@ impl<'a> Froyo<'a> {
 
         // Syncing done! Switch to just the scratch copy
         // then blow away the original degraded raid
-        let mut rld = mirror.linear_dev.borrow_mut();
+        // Can't call save_state below with the rld still borrowed
+        {
+            let mut rld = mirror.linear_dev.borrow_mut();
 
-        try!(rld.dev.suspend(&dm));
-        try!(mirror.teardown(&dm));
+            try!(rld.dev.suspend(&dm));
 
-        // splice the new location(s) into the RLD's list...
-        let mut offset = SectorOffset(0);
-        let mut removed = Vec::new();
-        for idx in &mirror.linear_dev_idxs {
-            let mut rld_tail = rld.segments.split_off(*idx);
-            let seg_len = rld_tail[0].length;
+            // splice the new location(s) into the RLD's list...
+            let mut offset = SectorOffset(0);
+            let mut removed = Vec::new();
+            for idx in &mirror.linear_dev_idxs {
+                let mut rld_tail = rld.segments.split_off(*idx);
+                let seg_len = rld_tail[0].length;
 
-            // We have an order to our degraded raidsegs (their
-            // indexes), and our linear mapping is in the same
-            // order and equal to the sum of their sizes. The
-            // mapping to scratch space we don't care about here,
-            // we know the linear dev contains the mirrored
-            // raidseg data and just need to offset into the dev
-            // for each one.
-            rld.segments.push(RaidSegment::new(
-                offset, seg_len, RaidLayer::Temp(mirror.dest.clone())));
-            offset = offset + SectorOffset(*seg_len);
-            // remove the raidsegment we just synced...
-            removed.push(rld_tail.remove(0));
-            // Put the rest back on the end
-            rld.segments.extend(rld_tail);
-        }
+                // We have an order to our degraded raidsegs (their
+                // indexes), and our linear mapping is in the same
+                // order and equal to the sum of their sizes. The
+                // mapping to scratch space we don't care about here,
+                // we know the linear dev contains the mirrored
+                // raidseg data and just need to offset into the dev
+                // for each one.
+                rld.segments.push(RaidSegment::new(
+                    offset, seg_len, RaidLayer::Temp(mirror.dest.clone())));
+                offset = offset + SectorOffset(*seg_len);
+                // remove the raidsegment we just synced...
+                removed.push(rld_tail.remove(0));
+                // Put the rest back on the end
+                rld.segments.extend(rld_tail);
+            }
 
-        // We're now running non-redundantly on scratch space. If we
-        // crash, we need to be able to rebuild so we can continue
-        // reshaping to regain redundancy.
-        self.raid_devs.temp_dev = Some(mirror.dest.clone());
+            // We're now running non-redundantly on scratch space. If we
+            // crash, we need to be able to rebuild so we can continue
+            // reshaping to regain redundancy.
+            self.raid_devs.temp_dev = Some(mirror.dest.clone());
 
-        let removed_rd = removed.iter().next().unwrap().parent.raid();
-        if removed.iter().any(|rs| rs.parent.raid() != removed_rd) {
-            panic!("all removed raidsegs are not on the same raiddev!");
+            let removed_rd = removed.iter().next().unwrap().parent.raid();
+            if removed.iter().any(|rs| rs.parent.raid() != removed_rd) {
+                panic!("all removed raidsegs are not on the same raiddev!");
+            }
         }
 
         try!(self.save_state());
 
+        let rld = mirror.linear_dev.borrow();
+
         let table = RaidLinearDev::dm_table(&rld.segments);
         try!(rld.dev.table_load(&dm, &table));
         try!(rld.dev.unsuspend(&dm));
+
+        try!(mirror.teardown(&dm));
 
         // We're now running non-redundantly off scratch. The state
         // machine should next look to zap and rebuild the now-unused
@@ -839,66 +851,72 @@ impl<'a> Froyo<'a> {
             return Ok(ReshapeState::CopyingFromScratch(mirror))
         }
 
-        // Syncing done! Switch to the redundant copy
-        let mut rld = mirror.linear_dev.borrow_mut();
+        {
+            // Syncing done! Switch to the redundant copy
+            // Can't call save_state below with the rld still borrowed
+            let mut rld = mirror.linear_dev.borrow_mut();
 
-        try!(rld.dev.suspend(&dm));
-        try!(mirror.teardown(&dm));
+            try!(rld.dev.suspend(&dm));
 
-        let mut dest = mirror.dest.borrow().segments.clone();
+            let mut dest = mirror.dest.borrow().segments.clone();
 
-        // So we can pop head
-        dest.reverse();
+            // So we can pop head
+            dest.reverse();
 
-        // Replace each RaidSegment on TempDevs with 1 or more
-        // RaidSegments on RaidDevs. This is unpleaseant because seg
-        // boundaries don't line up, although we know the overall
-        // lengths will match.
-        let (mut tl, mut dest_seg) = dest.pop().unwrap();
-        for idx in &mirror.linear_dev_idxs {
-            let mut rld_tail = rld.segments.split_off(*idx);
-            let mut len = rld_tail[0].length;
-            rld_tail.remove(0);
+            // Replace each RaidSegment on TempDevs with 1 or more
+            // RaidSegments on RaidDevs. This is unpleasant because seg
+            // boundaries don't line up, although we know the overall
+            // lengths will match.
+            let (mut tl, mut dest_seg) = dest.pop().unwrap();
+            for idx in &mirror.linear_dev_idxs {
+                let mut rld_tail = rld.segments.split_off(*idx);
+                let mut len = rld_tail[0].length;
+                rld_tail.remove(0);
 
-            while len > Sectors(0) {
-                if len >= dest_seg.length {
-                    len = len - dest_seg.length;
-                    rld.segments.push(RaidSegment::new(
-                        dest_seg.start,
-                        dest_seg.length,
-                        RaidLayer::Raid(tl.raid().clone())));
-                    let temp = dest.pop().unwrap();
-                    tl = temp.0;
-                    dest_seg = temp.1;
-                } else {
-                    // split dest_seg into two, pushing the first and
-                    // leaving the second as dest_seg.
-                    let new_dest_seg = LinearSegment::new(
-                        dest_seg.start + SectorOffset(*len),
-                        dest_seg.length - len);
-                    rld.segments.push(RaidSegment::new(
-                        dest_seg.start,
-                        len,
-                        RaidLayer::Raid(tl.raid().clone())));
-                    // tl stays the same
-                    dest_seg = new_dest_seg;
-                    len = Sectors(0);
+                while len > Sectors(0) {
+                    if len >= dest_seg.length {
+                        len = len - dest_seg.length;
+                        rld.segments.push(RaidSegment::new(
+                            dest_seg.start,
+                            dest_seg.length,
+                            RaidLayer::Raid(tl.raid().clone())));
+                        let temp = dest.pop().unwrap();
+                        tl = temp.0;
+                        dest_seg = temp.1;
+                    } else {
+                        // split dest_seg into two, pushing the first and
+                        // leaving the second as dest_seg.
+                        let new_dest_seg = LinearSegment::new(
+                            dest_seg.start + SectorOffset(*len),
+                            dest_seg.length - len);
+                        rld.segments.push(RaidSegment::new(
+                            dest_seg.start,
+                            len,
+                            RaidLayer::Raid(tl.raid().clone())));
+                        // tl stays the same
+                        dest_seg = new_dest_seg;
+                        len = Sectors(0);
+                    }
                 }
+
+                // Put the rest back on the end
+                rld.segments.extend(rld_tail);
             }
 
-            // Put the rest back on the end
-            rld.segments.extend(rld_tail);
+            // We just copied back onto redundant space. We no longer
+            // need to track a temp dev in our saved metadata.
+            self.raid_devs.temp_dev = None;
         }
 
-        // We just copied back onto redundant space. We no longer
-        // need to track a temp dev in our saved metadata.
-        self.raid_devs.temp_dev = None;
-
         try!(self.save_state());
+
+        let rld = mirror.linear_dev.borrow();
 
         let table = RaidLinearDev::dm_table(&rld.segments);
         try!(rld.dev.table_load(&dm, &table));
         try!(rld.dev.unsuspend(&dm));
+
+        try!(mirror.teardown(&dm));
 
         Ok(ReshapeState::Idle)
     }
