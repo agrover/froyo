@@ -1037,7 +1037,6 @@ impl<'a> Froyo<'a> {
         };
 
         if let Some(state) = r_state {
-            dbgp!("reshaping! {:#?}", state);
             self.last_state = match try!(self.reshape_state_machine(state)) {
                 ReshapeState::Off => FroyoState::Good(FroyoRunningState::Good),
                 x => FroyoState::Good(FroyoRunningState::Reshaping(x)),
