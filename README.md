@@ -46,7 +46,7 @@ docs for how to accomplish the same thing.
 1. Extending thin device when threshold is hit
 1. List froyodevs and get status on a froyodev
 
-### Things that are implemented but need testing
+### Things that are implemented but don't work
 
 1. Reshape smaller to re-establish redundancy after a disk is removed
 
