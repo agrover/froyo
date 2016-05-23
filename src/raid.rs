@@ -556,6 +556,8 @@ impl RaidDevs {
         block_devs: &BlockDevs)
         -> FroyoResult<Option<RaidDev>> {
 
+        let scratch_needed = self.scratch_needed();
+
         // get common data area size, allowing for Froyo data at start and end
         let mut bd_areas: Vec<_> = block_devs.0.values()
             .filter_map(|bd| bd.present())
@@ -565,6 +567,8 @@ impl RaidDevs {
                     None => None,
                 }
             })
+            .filter(|&(_, _, len)| len >= scratch_needed)
+            .map(|(bd, off, len)| (bd, off, len - scratch_needed))
             .filter(|&(_, _, len)| len >= MIN_DATA_ZONE_SECTORS)
             .collect();
 
@@ -573,6 +577,7 @@ impl RaidDevs {
             return Ok(None)
         }
 
+        // Ensure we leave enough scratch space to handle a reshape
         let common_avail_sectors = bd_areas.iter()
             .map(|&(_, _, len)| len)
             .min()
@@ -597,21 +602,7 @@ impl RaidDevs {
         let clamped_size = max(
             second_largest_bdev / Sectors(IDEAL_RAID_COUNT as u64),
             MIN_DATA_ZONE_SECTORS);
-        let mut common_avail_sectors = min(common_avail_sectors, clamped_size);
-
-        // Ensure we have enough scratch space to handle a reshape
-        let tot_sectors_left = block_devs.unused_space()
-            - (common_avail_sectors * Sectors(bd_areas.len() as u64));
-        let scratch_shortfall = *self.scratch_needed() as i64
-            - *tot_sectors_left as i64;
-
-        if scratch_shortfall > 0 {
-            common_avail_sectors = common_avail_sectors
-                - Sectors((scratch_shortfall as u64 / bd_areas.len() as u64) + 1);
-            if common_avail_sectors < MIN_DATA_ZONE_SECTORS {
-                return Ok(None)
-            }
-        }
+        let common_avail_sectors = min(common_avail_sectors, clamped_size);
 
         // Handle raid regions and calc metadata size
         let (region_count, region_sectors) = {
@@ -707,11 +698,13 @@ impl RaidDevs {
         }
     }
 
-    // We need scratch space equal to the largest raiddev capacity.
+    // We need scratch space on each drive for half the largest
+    // raiddev capacity. This is overly generous but let's just do
+    // this until we have reshape support
     fn scratch_needed(&self) -> Sectors {
         self.raids.values()
             .map(|rd| rd.borrow().length)
-            .max().unwrap_or_else(|| Sectors(0))
+            .max().unwrap_or_else(|| Sectors(0)) / Sectors(2) + Sectors(1)
     }
 
     pub fn are_idle(&self) -> bool {
