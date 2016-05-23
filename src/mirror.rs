@@ -36,8 +36,8 @@ impl MirrorDev {
         linear_dev: Rc<RefCell<RaidLinearDev>>,
         linear_dev_idxs: &[usize])
                -> FroyoResult<MirrorDev> {
-        let table = (0, *length, "raid1",
-                     format!("1 {} - {} - {}",
+        let table = (0, *length, "raid",
+                     format!("raid1 1 {} 2 - {} - {}",
                              *STRIPE_SECTORS,
                              src.borrow().dmdev.dstr(),
                              dest.borrow().dmdev.dstr()));
