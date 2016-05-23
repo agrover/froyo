@@ -179,7 +179,7 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
             if 0x800 & status != 0 { stats.push("Thin device failure".into()) }
             if 0x1000 & status != 0 { stats.push("Filesystem failure".into()) }
             if 0x2000 & status != 0 { stats.push("Initializing".into()) }
-	    if stats.is_empty() {
+	    if 0xffffc000 & status != 0 {
                 stats.push(format!("Unenumerated failure: {:x}", status).into())
             }
             stats.join(", ").into()
@@ -196,7 +196,7 @@ fn status(args: &ArgMatches) -> FroyoResult<()> {
             }
             if 0x400 & r_status != 0 { stats.push("Reshaping".into()) }
             if 0x800 & r_status != 0 { stats.push("Throttled".into()) }
-            if stats.is_empty() { stats.push(
+            if 0xfffff000 & r_status != 0 { stats.push(
                 format!("Unenumerated issue: {:x}", r_status).into())
             }
             stats.join(", ").into()
