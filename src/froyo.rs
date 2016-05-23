@@ -980,7 +980,12 @@ impl<'a> Froyo<'a> {
         // phase 2: use all space efficiently
         //
         // thinpool extend needed while reshape? cancel reshape. (how?)
-        //
+
+        if !self.is_reshapable() {
+            dbgp!("cannot initiate a reshape!");
+            return Err(FroyoError::Froyo(InternalError("Cannot reshape".into())))
+        }
+
         dbgp!("starting reshaping!");
         self.last_state = match try!(self.reshape_state_machine(ReshapeState::Idle)) {
             ReshapeState::Off => FroyoState::Good(FroyoRunningState::Good),
