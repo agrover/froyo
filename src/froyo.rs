@@ -1270,6 +1270,10 @@ impl<'a> Froyo<'a> {
     // Start copying back from scratch space to redundant space
     fn start_copy_from_scratch(&mut self, dest: Rc<RefCell<RaidLinearDev>>)
                                -> FroyoResult<ReshapeState> {
+        if !dest.borrow().segments.iter().any(|seg| seg.parent.on_temp()) {
+            return Ok(ReshapeState::Idle)
+        }
+
         let src_dev = match self.raid_devs.temp_dev.take() {
             Some(td) => td,
             None => return Ok(ReshapeState::Idle),
