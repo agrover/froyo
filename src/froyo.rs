@@ -1138,11 +1138,15 @@ impl<'a> Froyo<'a> {
             }
         }
 
-        for id in removed {
-            self.raid_devs.raids.remove(&id);
+        if !removed.is_empty() {
+            for id in removed {
+                self.raid_devs.raids.remove(&id);
+            }
+            try!(self.save_state());
         }
 
         if try!(self.raid_devs.create_redundant_zones(&dm, &self.id, &self.block_devs)) {
+            try!(self.save_state());
             Ok(ReshapeState::SyncingRaids)
         } else {
             Ok(ReshapeState::Idle)
