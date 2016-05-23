@@ -459,10 +459,9 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
 
         for froyo in &*froyos.borrow() {
             let mut froyo = froyo.borrow_mut();
-            try!(froyo.handle_thinpool_usage());
+            try!(froyo.check_state());
             try!(froyo.update_dbus());
             try!(froyo.dump_status());
-            try!(froyo.check_state());
         }
     }
 

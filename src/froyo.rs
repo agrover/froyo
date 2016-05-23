@@ -1013,7 +1013,7 @@ impl<'a> Froyo<'a> {
             FroyoState::Good(FroyoRunningState::Reshaping(ref state)) => {
                 Some(state.clone())
             }
-            _ => None,
+            _ => return self.handle_thinpool_usage(),
         };
 
         if let Some(state) = r_state {
