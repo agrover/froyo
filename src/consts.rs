@@ -4,7 +4,7 @@
 
 use types::{Sectors, SectorOffset};
 
-pub const DBUS_TIMEOUT: i32 = 10000; // millieconds
+pub const DBUS_TIMEOUT: i32 = 20000; // millieconds
 
 pub const REDUNDANCY: usize = 1;
 pub const MIN_BLK_DEVS: usize = 2;
