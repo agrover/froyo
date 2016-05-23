@@ -737,6 +737,8 @@ impl<'a> Froyo<'a> {
                       -> FroyoResult<ReshapeState> {
         let dm = try!(DM::new());
 
+        dbgp!("check_raidcopy");
+
         if try!(mirror.is_syncing(&dm)) {
             return Ok(ReshapeState::CopyingToRaid(mirror))
         }
@@ -779,6 +781,8 @@ impl<'a> Froyo<'a> {
     fn check_copy_to_scratch(&mut self, mirror: MirrorDev)
                              -> FroyoResult<ReshapeState> {
         let dm = try!(DM::new());
+
+        dbgp!("check_copy_to_scratch");
 
         if try!(mirror.is_syncing(&dm)) {
             return Ok(ReshapeState::CopyingToScratch(mirror))
@@ -846,6 +850,8 @@ impl<'a> Froyo<'a> {
     fn check_copy_from_scratch(&mut self, mirror: MirrorDev)
                                -> FroyoResult<ReshapeState> {
         let dm = try!(DM::new());
+
+        dbgp!("check_copy_from_scratch");
 
         if try!(mirror.is_syncing(&dm)) {
             return Ok(ReshapeState::CopyingFromScratch(mirror))
@@ -922,6 +928,7 @@ impl<'a> Froyo<'a> {
     }
 
     fn check_resync(&self) -> FroyoResult<ReshapeState> {
+        dbgp!("check_resync");
         if self.raid_devs.are_idle() {
             Ok(ReshapeState::Idle)
         } else {
@@ -1146,9 +1153,11 @@ impl<'a> Froyo<'a> {
         }
 
         if try!(self.raid_devs.create_redundant_zones(&dm, &self.id, &self.block_devs)) {
+            dbgp!("created new raids, syncing");
             try!(self.save_state());
             Ok(ReshapeState::SyncingRaids)
         } else {
+            dbgp!("no new raids created");
             Ok(ReshapeState::Idle)
         }
     }
