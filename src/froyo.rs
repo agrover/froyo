@@ -1094,6 +1094,11 @@ impl<'a> Froyo<'a> {
             return false
         }
 
+        if let FroyoState::Good(FroyoRunningState::Reshaping(_)) = self.last_state {
+            dbgp!("can't reshape, already reshaping");
+            return false
+        }
+
         dbgp!("can reshape");
         true
     }
