@@ -414,7 +414,9 @@ impl<'a> Froyo<'a> {
                 RaidStatus::Failed => return Ok(FroyoState::RaidFailed),
                 RaidStatus::Degraded(x) => degraded = max(degraded, x as u8),
                 RaidStatus::Good => if let RaidAction::Resync = r_action {
-                    return Ok(FroyoState::Initializing)
+                    if let FroyoState::Initializing = self.last_state {
+                        return Ok(FroyoState::Initializing)
+                    }
                 },
             }
         }
