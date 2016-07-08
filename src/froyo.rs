@@ -701,13 +701,13 @@ impl<'a> Froyo<'a> {
                 // Take out Present value...
                 let rm = raid.members[ld_idx].clone();
                 let ld = rm.present().expect("should be here!!!");
-                let parent = ld.borrow().parent.upgrade().unwrap();
-                let parent_id = parent.borrow().id.clone();
 
                 let new_rm = {
                     if wipe_sb {
                         RaidMember::Removed
                     } else {
+                        let parent = ld.borrow().parent.upgrade().unwrap();
+                        let parent_id = parent.borrow().id.clone();
                         RaidMember::Absent((parent_id, ld.borrow().to_save()))
                     }
                 };
