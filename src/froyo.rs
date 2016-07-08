@@ -655,9 +655,8 @@ impl<'a> Froyo<'a> {
                 let mut ld_index = None;
                 for (count, rm) in rd.members.iter().enumerate() {
                     if let Some(pres) = rm.present() {
-                        let ld = pres.borrow();
-                        let parent_bd = ld.parent.borrow();
-                        if parent_bd.dev == blockdev.dev {
+                        let parent_rc = pres.borrow().parent.upgrade().unwrap();
+                        if parent_rc.borrow().dev == blockdev.dev {
                             // A raid may only have 1 lineardev on a
                             // given blockdev
                             ld_index = Some(count);
@@ -702,8 +701,8 @@ impl<'a> Froyo<'a> {
                 // Take out Present value...
                 let rm = raid.members[ld_idx].clone();
                 let ld = rm.present().expect("should be here!!!");
-                let b_ld = ld.borrow();
-                let parent_id = b_ld.parent.borrow().id.clone();
+                let parent = ld.borrow().parent.upgrade().unwrap();
+                let parent_id = parent.borrow().id.clone();
 
                 let new_rm = {
                     if wipe_sb {

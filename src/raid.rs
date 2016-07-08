@@ -176,8 +176,8 @@ impl RaidDev {
             if let RaidMember::Present(ref linear) = *member {
                 let linear = linear.borrow_mut();
                 try!(linear.teardown(dm));
-                linear.parent.borrow_mut().linear_devs.remove(
-                    &linear.meta_dev.dm_name);
+                let bd = linear.parent.upgrade().unwrap();
+                bd.borrow_mut().linear_devs.remove(&linear.meta_dev.dm_name);
             }
         }
 

@@ -6,7 +6,7 @@ use std::io::{Read, Write, ErrorKind, Seek, SeekFrom};
 use std::fs::{OpenOptions, read_dir};
 use std::path::{Path, PathBuf};
 use std::io;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 use std::str::{FromStr, from_utf8};
 use std::cmp::Ordering;
@@ -489,13 +489,23 @@ pub struct LinearDevSave {
 
 // A LinearDev contains two mappings within a single blockdev. This is
 // primarily used for making RaidDevs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct LinearDev {
     pub meta_dev: DmDevice,
     meta_segments: Vec<LinearSegment>,
     pub data_dev: DmDevice,
     data_segments: Vec<LinearSegment>,
-    pub parent: Rc<RefCell<BlockDev>>,
+    pub parent: Weak<RefCell<BlockDev>>,
+}
+
+impl PartialEq for LinearDev {
+    fn eq(&self, other: &LinearDev) -> bool {
+        self.meta_dev == other.meta_dev
+            && self.meta_segments == other.meta_segments
+            && self.data_dev == other.data_dev
+            && self.data_segments == other.data_segments
+            && self.parent.upgrade().unwrap() == other.parent.upgrade().unwrap()
+    }
 }
 
 impl LinearDev {
@@ -553,7 +563,7 @@ impl LinearDev {
             meta_segments: meta_segments.to_vec(),
             data_dev: data_dev,
             data_segments: data_segments.to_vec(),
-            parent: blockdev.clone(),
+            parent: Rc::downgrade(blockdev),
         })
     }
 
@@ -564,10 +574,12 @@ impl LinearDev {
     }
 
     pub fn to_save(&self) -> LinearDevSave {
+        let p_rc = self.parent.upgrade().unwrap();
+        let parent = p_rc.borrow().id.clone();
         LinearDevSave {
             meta_segments: self.meta_segments.clone(),
             data_segments: self.data_segments.clone(),
-            parent: self.parent.borrow().id.clone(),
+            parent: parent,
         }
     }
 
