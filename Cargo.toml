@@ -16,7 +16,11 @@ serde = "*"
 serde_json = "*"
 serde_macros = "0"
 custom_derive = "0.1"
-newtype_derive = "0.1"
 bytesize = "0.1.1"
 dbus = "0.3"
 term = "0.4"
+
+[dependencies.newtype_derive]
+version = "0.1"
+default-features = false
+features = ["std-unstable"]

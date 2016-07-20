@@ -2,8 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#![feature(iter_arith, zero_one, custom_derive,
-           custom_attribute, plugin, const_fn)]
+#![feature(custom_derive, iter_arith_traits, custom_attribute, plugin, const_fn)]
 #![plugin(serde_macros)]
 #![plugin(clippy)]
 

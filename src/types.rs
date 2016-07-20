@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::num::Zero;
 use std::io;
 use std::fmt;
 use std::error::Error;
@@ -24,15 +23,9 @@ pub type FroyoResult<T> = Result<T, FroyoError>;
 custom_derive! {
     #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
-             NewtypeMul,
+             NewtypeMul, NewtypeSum,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct Sectors(pub u64);
-}
-
-impl Zero for Sectors {
-    fn zero() -> Self {
-        Sectors(0)
-    }
 }
 
 impl serde::Serialize for Sectors {
@@ -60,12 +53,6 @@ custom_derive! {
     pub struct SectorOffset(pub u64);
 }
 
-impl Zero for SectorOffset {
-    fn zero() -> Self {
-        SectorOffset(0)
-    }
-}
-
 impl serde::Serialize for SectorOffset {
     fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
         where S: serde::Serializer,
@@ -90,12 +77,6 @@ custom_derive! {
              NewtypeMul,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct DataBlocks(pub u64);
-}
-
-impl Zero for DataBlocks {
-    fn zero() -> Self {
-        DataBlocks(0)
-    }
 }
 
 impl serde::Serialize for DataBlocks {

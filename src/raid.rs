@@ -980,15 +980,15 @@ impl RaidLinearDev {
         let coalesced_new_first = {
             let mut old_last = self.segments.last_mut().unwrap();
             let new_first = segs.first().unwrap();
-            let mut coal = false;
             if old_last.parent.id() == new_first.parent.id()
                 && (old_last.start + SectorOffset(*old_last.length)
                     == new_first.start) {
                     let new_len = old_last.length + new_first.length;
                     old_last.update_length(new_len);
-                    coal = true;
+                    true
+                } else {
+                    false
                 }
-            coal
         };
 
         if coalesced_new_first {
