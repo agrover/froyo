@@ -22,7 +22,7 @@ use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
 use bytesize::ByteSize;
 
-use types::{Sectors, SectorOffset, FroyoResult, FroyoError};
+use types::{Sectors, SumSectors, SectorOffset, FroyoResult, FroyoError};
 use consts::*;
 use util::blkdev_size;
 use dmdevice::DmDevice;
@@ -421,7 +421,7 @@ impl BlockDevs {
 
     // Unused (non-redundant) space left on blockdevs
     pub fn unused_space(&self) -> Sectors {
-        self.avail_areas().iter().map(|&(_, _, len)| len).sum::<Sectors>()
+        self.avail_areas().iter().map(|&(_, _, len)| len).sum_sectors()
     }
 
     pub fn avail_areas(&self) -> Vec<(Rc<RefCell<BlockDev>>, SectorOffset, Sectors)> {
@@ -567,10 +567,10 @@ impl LinearDev {
     }
 
     pub fn metadata_length(&self) -> Sectors {
-        self.meta_segments.iter().map(|x| x.length).sum()
+        self.meta_segments.iter().map(|x| x.length).sum_sectors()
     }
 
     pub fn data_length(&self) -> Sectors {
-        self.data_segments.iter().map(|x| x.length).sum()
+        self.data_segments.iter().map(|x| x.length).sum_sectors()
     }
 }

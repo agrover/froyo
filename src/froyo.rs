@@ -25,7 +25,7 @@ use raid::{RaidDevs, RaidSegment, RaidLinearDev, RaidStatus,
 use thin::{ThinPoolDev, ThinPoolStatus, ThinPoolWorkingStatus};
 use thin::{ThinDev, ThinStatus};
 use mirror::{MirrorDev, TempDev, TempLayer};
-use types::{Sectors, SectorOffset, DataBlocks, FroyoError, FroyoResult, InternalError};
+use types::{Sectors, SumSectors, SectorOffset, DataBlocks, FroyoError, FroyoResult, InternalError};
 use dbus_api::DbusContext;
 use util::short_id;
 use consts::*;
@@ -1082,7 +1082,7 @@ impl<'a> Froyo<'a> {
                 let sz = (members_present - REDUNDANCY) * *per_member_data_size as usize;
                 Sectors(sz as u64)
             })
-            .sum::<Sectors>();
+            .sum_sectors();
 
         if self.thin_pool_dev.used_sectors() > reshaped_tot_size {
             dbgp!("can't reshape, too much data for reshaped froyodev");
@@ -1254,7 +1254,7 @@ impl<'a> Froyo<'a> {
             .collect::<Vec<_>>();
         let spc_needed = raid_segs.iter()
             .map(|&(_, ls)| ls.length)
-            .sum::<Sectors>();
+            .sum_sectors();
 
         let scratch_areas = try!(
             self.block_devs.get_linear_segments(spc_needed)

@@ -6,6 +6,7 @@ use std::io;
 use std::fmt;
 use std::error::Error;
 use std::borrow::Cow;
+use std::ops::Add;
 
 use serde;
 use serde_json;
@@ -23,9 +24,25 @@ pub type FroyoResult<T> = Result<T, FroyoError>;
 custom_derive! {
     #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
              NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
-             NewtypeMul, NewtypeSum,
+             NewtypeMul,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct Sectors(pub u64);
+}
+
+// `SumSectors` can be discarded once `std::iter::Sum` is stable.
+pub trait SumSectors: Iterator
+where Sectors: Add<Self::Item, Output=Sectors>
+{
+    fn sum_sectors(self) -> Sectors
+        where Self: Sized
+    {
+        self.fold(Sectors(0), Add::add)
+    }
+}
+
+impl<T: Iterator> SumSectors for T
+where Sectors: Add<T::Item, Output=Sectors>
+{
 }
 
 impl serde::Serialize for Sectors {

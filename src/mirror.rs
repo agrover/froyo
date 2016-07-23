@@ -10,7 +10,7 @@ use uuid::Uuid;
 use devicemapper::DM;
 
 use froyo::FroyoSave;
-use types::{Sectors, SectorOffset, FroyoResult, FroyoError, InternalError};
+use types::{Sectors, SumSectors, SectorOffset, FroyoResult, FroyoError, InternalError};
 use consts::*;
 use blockdev::{LinearSegment, BlockDev, BlockDevs};
 use dmdevice::DmDevice;
@@ -197,7 +197,7 @@ impl TempDev {
     }
 
     pub fn length(&self) -> Sectors {
-        self.segments.iter().map(|&(_, x)| x.length).sum()
+        self.segments.iter().map(|&(_, x)| x.length).sum_sectors()
     }
 
     pub fn to_save(&self) -> TempDevSave {

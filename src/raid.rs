@@ -15,7 +15,7 @@ use uuid::Uuid;
 use devicemapper::DM;
 
 use froyo::FroyoSave;
-use types::{Sectors, SectorOffset, FroyoError, FroyoResult, InternalError};
+use types::{Sectors, SumSectors, SectorOffset, FroyoError, FroyoResult, InternalError};
 use blockdev::{LinearDev, LinearDevSave, BlockDev, LinearSegment, BlockDevs, BlockMember};
 use consts::*;
 use dmdevice::DmDevice;
@@ -237,7 +237,7 @@ impl RaidDev {
     fn avail_sectors(&self) -> Sectors {
         self.avail_areas().into_iter()
             .map(|(_, len)| len)
-            .sum()
+            .sum_sectors()
     }
 
     // Is this raiddev a good one to maybe put more stuff on?
@@ -743,7 +743,7 @@ impl RaidDevs {
             .map(|(_, rd)| {
                 rd.borrow().used_areas().into_iter()
                     .map(|(_, len)| len)
-                    .sum::<Sectors>()
+                    .sum_sectors()
             })
             .max().unwrap_or_else(|| Sectors(0))
     }
@@ -751,13 +751,13 @@ impl RaidDevs {
     pub fn avail_space(&self) -> Sectors {
         self.raids.values()
             .map(|rd| rd.borrow().avail_sectors())
-            .sum::<Sectors>()
+            .sum_sectors()
     }
 
     pub fn total_space(&self) -> Sectors {
         self.raids.values()
             .map(|rd| rd.borrow().length)
-            .sum::<Sectors>()
+            .sum_sectors()
     }
 
     pub fn add_new_block_device(&mut self, froyo_id: &str, blockdev: &Rc<RefCell<BlockDev>>)
@@ -950,7 +950,7 @@ impl RaidLinearDev {
     }
 
     pub fn length(&self) -> Sectors {
-        self.segments.iter().map(|x| x.length).sum()
+        self.segments.iter().map(|x| x.length).sum_sectors()
     }
 
     pub fn extend(&mut self, segs: Vec<RaidSegment>)
