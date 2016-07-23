@@ -18,15 +18,6 @@ IRC: `#froyo` on irc.freenode.org
 
 Mailing list: `froyo@lists.fedorahosted.org`
 
-## Development notes
-
-Currently requires using [Rust nightly compiler](https://doc.rust-lang.org/book/nightly-rust.html).
-
-The last verified working nightly snapshot was 2016-07-18. If using
-Multirust, run `multirust override nightly-2016-07-18` in the `froyo`
-directory to use this snapshot for Froyo. If using Rustup, see its
-docs for how to accomplish the same thing.
-
 ## Trying it out (Caution highly recommended, may eat data!)
 
 1. Compile Froyo
