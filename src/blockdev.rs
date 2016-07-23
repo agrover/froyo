@@ -27,18 +27,14 @@ use consts::*;
 use util::blkdev_size;
 use dmdevice::DmDevice;
 
+pub use serialize::{BlockDevSave, LinearSegment, LinearDevSave};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MDA {
     pub last_updated: Timespec,
     length: u32,
     crc: u32,
     offset: SectorOffset,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockDevSave {
-    pub path: PathBuf,
-    pub sectors: Sectors,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -465,12 +461,6 @@ impl BlockDevs {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct LinearSegment {
-    pub start: SectorOffset,
-    pub length: Sectors,
-}
-
 impl LinearSegment {
     pub fn new(start: SectorOffset, length: Sectors) -> LinearSegment {
         LinearSegment {
@@ -478,13 +468,6 @@ impl LinearSegment {
             length: length,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LinearDevSave {
-    pub meta_segments: Vec<LinearSegment>,
-    pub data_segments: Vec<LinearSegment>,
-    pub parent: String,
 }
 
 // A LinearDev contains two mappings within a single blockdev. This is

@@ -22,14 +22,7 @@ use dmdevice::DmDevice;
 use mirror::{TempDev};
 use util::align_to;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaidDevSave {
-    pub stripe_sectors: Sectors,
-    pub region_sectors: Sectors,
-    pub length: Sectors,
-    pub member_count: usize,
-    pub members: BTreeMap<String, LinearDevSave>,
-}
+pub use serialize::{RaidDevSave, RaidSegmentSave, RaidLinearDevSave};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaidDev {
@@ -799,13 +792,6 @@ impl RaidDevs {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaidSegmentSave {
-    pub start: SectorOffset,
-    pub length: Sectors,
-    pub parent: String,  // RaidDev id
-}
-
 // A RaidSegment will almost always be on a RaidDev, unless we're
 // reshaping and we had to temporarily copy it to a temp area.
 #[derive(Debug, Clone)]
@@ -902,12 +888,6 @@ impl Drop for RaidSegment {
             RaidLayer::Temp(_) => {},
         };
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaidLinearDevSave {
-    pub id: String,
-    pub segments: Vec<RaidSegmentSave>,
 }
 
 #[derive(Debug)]

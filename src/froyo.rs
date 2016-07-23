@@ -18,29 +18,19 @@ use serde_json;
 use time;
 use bytesize::ByteSize;
 
-use blockdev::{BlockDev, BlockDevs, BlockDevSave, BlockMember};
+use blockdev::{BlockDev, BlockDevs, BlockMember};
 use blockdev::LinearSegment;
-use raid::{RaidDevs, RaidDevSave, RaidSegment, RaidLinearDev, RaidStatus,
+use raid::{RaidDevs, RaidSegment, RaidLinearDev, RaidStatus,
            RaidAction, RaidMember, RaidLayer};
-use thin::{ThinPoolDev, ThinPoolDevSave, ThinPoolStatus, ThinPoolWorkingStatus};
-use thin::{ThinDev, ThinDevSave, ThinStatus};
-use mirror::{MirrorDev, TempDev, TempDevSave, TempLayer};
+use thin::{ThinPoolDev, ThinPoolStatus, ThinPoolWorkingStatus};
+use thin::{ThinDev, ThinStatus};
+use mirror::{MirrorDev, TempDev, TempLayer};
 use types::{Sectors, SectorOffset, DataBlocks, FroyoError, FroyoResult, InternalError};
 use dbus_api::DbusContext;
 use util::short_id;
 use consts::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FroyoSave {
-    pub name: String,
-    pub id: String,
-    pub block_devs: BTreeMap<String, BlockDevSave>,
-    pub raid_devs: BTreeMap<String, RaidDevSave>,
-    pub thin_pool_dev: ThinPoolDevSave,
-    pub thin_devs: Vec<ThinDevSave>,
-    #[serde(skip_serializing_if="Option::is_none")]
-    pub temp_dev: Option<TempDevSave>,
-}
+pub use serialize::FroyoSave;
 
 #[derive(Debug, Clone)]
 pub struct Froyo<'a> {

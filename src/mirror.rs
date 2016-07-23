@@ -16,6 +16,8 @@ use blockdev::{LinearSegment, BlockDev, BlockDevs};
 use dmdevice::DmDevice;
 use raid::{RaidDev, RaidLinearDev};
 
+pub use serialize::{TempDevSegmentSave, TempDevSave};
+
 #[derive(Debug, Clone)]
 pub struct MirrorDev {
     pub mirror: DmDevice,
@@ -123,19 +125,6 @@ impl TempLayer {
             TempLayer::Raid(ref rd) => rd.borrow().id.to_owned(),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TempDevSegmentSave {
-    pub parent: String,
-    pub start: SectorOffset,
-    pub length: Sectors,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TempDevSave {
-    pub id: String,
-    pub segments: Vec<TempDevSegmentSave>,
 }
 
 #[derive(Debug, Clone)]
