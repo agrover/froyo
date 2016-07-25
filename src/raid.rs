@@ -15,21 +15,14 @@ use uuid::Uuid;
 use devicemapper::DM;
 
 use froyo::FroyoSave;
-use types::{Sectors, SectorOffset, FroyoError, FroyoResult, InternalError};
+use types::{Sectors, SumSectors, SectorOffset, FroyoError, FroyoResult, InternalError};
 use blockdev::{LinearDev, LinearDevSave, BlockDev, LinearSegment, BlockDevs, BlockMember};
 use consts::*;
 use dmdevice::DmDevice;
 use mirror::{TempDev};
 use util::align_to;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaidDevSave {
-    pub stripe_sectors: Sectors,
-    pub region_sectors: Sectors,
-    pub length: Sectors,
-    pub member_count: usize,
-    pub members: BTreeMap<String, LinearDevSave>,
-}
+pub use serialize::{RaidDevSave, RaidSegmentSave, RaidLinearDevSave};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaidDev {
@@ -244,7 +237,7 @@ impl RaidDev {
     fn avail_sectors(&self) -> Sectors {
         self.avail_areas().into_iter()
             .map(|(_, len)| len)
-            .sum()
+            .sum_sectors()
     }
 
     // Is this raiddev a good one to maybe put more stuff on?
@@ -750,7 +743,7 @@ impl RaidDevs {
             .map(|(_, rd)| {
                 rd.borrow().used_areas().into_iter()
                     .map(|(_, len)| len)
-                    .sum::<Sectors>()
+                    .sum_sectors()
             })
             .max().unwrap_or_else(|| Sectors(0))
     }
@@ -758,13 +751,13 @@ impl RaidDevs {
     pub fn avail_space(&self) -> Sectors {
         self.raids.values()
             .map(|rd| rd.borrow().avail_sectors())
-            .sum::<Sectors>()
+            .sum_sectors()
     }
 
     pub fn total_space(&self) -> Sectors {
         self.raids.values()
             .map(|rd| rd.borrow().length)
-            .sum::<Sectors>()
+            .sum_sectors()
     }
 
     pub fn add_new_block_device(&mut self, froyo_id: &str, blockdev: &Rc<RefCell<BlockDev>>)
@@ -797,13 +790,6 @@ impl RaidDevs {
 
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaidSegmentSave {
-    pub start: SectorOffset,
-    pub length: Sectors,
-    pub parent: String,  // RaidDev id
 }
 
 // A RaidSegment will almost always be on a RaidDev, unless we're
@@ -904,12 +890,6 @@ impl Drop for RaidSegment {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RaidLinearDevSave {
-    pub id: String,
-    pub segments: Vec<RaidSegmentSave>,
-}
-
 #[derive(Debug)]
 pub struct RaidLinearDev {
     id: String,
@@ -970,7 +950,7 @@ impl RaidLinearDev {
     }
 
     pub fn length(&self) -> Sectors {
-        self.segments.iter().map(|x| x.length).sum()
+        self.segments.iter().map(|x| x.length).sum_sectors()
     }
 
     pub fn extend(&mut self, segs: Vec<RaidSegment>)

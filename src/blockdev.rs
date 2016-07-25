@@ -22,10 +22,12 @@ use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
 use bytesize::ByteSize;
 
-use types::{Sectors, SectorOffset, FroyoResult, FroyoError};
+use types::{Sectors, SumSectors, SectorOffset, FroyoResult, FroyoError};
 use consts::*;
 use util::blkdev_size;
 use dmdevice::DmDevice;
+
+pub use serialize::{BlockDevSave, LinearSegment, LinearDevSave};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MDA {
@@ -33,12 +35,6 @@ pub struct MDA {
     length: u32,
     crc: u32,
     offset: SectorOffset,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockDevSave {
-    pub path: PathBuf,
-    pub sectors: Sectors,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -425,7 +421,7 @@ impl BlockDevs {
 
     // Unused (non-redundant) space left on blockdevs
     pub fn unused_space(&self) -> Sectors {
-        self.avail_areas().iter().map(|&(_, _, len)| len).sum::<Sectors>()
+        self.avail_areas().iter().map(|&(_, _, len)| len).sum_sectors()
     }
 
     pub fn avail_areas(&self) -> Vec<(Rc<RefCell<BlockDev>>, SectorOffset, Sectors)> {
@@ -465,12 +461,6 @@ impl BlockDevs {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct LinearSegment {
-    pub start: SectorOffset,
-    pub length: Sectors,
-}
-
 impl LinearSegment {
     pub fn new(start: SectorOffset, length: Sectors) -> LinearSegment {
         LinearSegment {
@@ -478,13 +468,6 @@ impl LinearSegment {
             length: length,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LinearDevSave {
-    pub meta_segments: Vec<LinearSegment>,
-    pub data_segments: Vec<LinearSegment>,
-    pub parent: String,
 }
 
 // A LinearDev contains two mappings within a single blockdev. This is
@@ -584,10 +567,10 @@ impl LinearDev {
     }
 
     pub fn metadata_length(&self) -> Sectors {
-        self.meta_segments.iter().map(|x| x.length).sum()
+        self.meta_segments.iter().map(|x| x.length).sum_sectors()
     }
 
     pub fn data_length(&self) -> Sectors {
-        self.data_segments.iter().map(|x| x.length).sum()
+        self.data_segments.iter().map(|x| x.length).sum_sectors()
     }
 }

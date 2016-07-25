@@ -10,11 +10,13 @@ use uuid::Uuid;
 use devicemapper::DM;
 
 use froyo::FroyoSave;
-use types::{Sectors, SectorOffset, FroyoResult, FroyoError, InternalError};
+use types::{Sectors, SumSectors, SectorOffset, FroyoResult, FroyoError, InternalError};
 use consts::*;
 use blockdev::{LinearSegment, BlockDev, BlockDevs};
 use dmdevice::DmDevice;
 use raid::{RaidDev, RaidLinearDev};
+
+pub use serialize::{TempDevSegmentSave, TempDevSave};
 
 #[derive(Debug, Clone)]
 pub struct MirrorDev {
@@ -125,19 +127,6 @@ impl TempLayer {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TempDevSegmentSave {
-    pub parent: String,
-    pub start: SectorOffset,
-    pub length: Sectors,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TempDevSave {
-    pub id: String,
-    pub segments: Vec<TempDevSegmentSave>,
-}
-
 #[derive(Debug, Clone)]
 pub struct TempDev {
     pub id: String,
@@ -208,7 +197,7 @@ impl TempDev {
     }
 
     pub fn length(&self) -> Sectors {
-        self.segments.iter().map(|&(_, x)| x.length).sum()
+        self.segments.iter().map(|&(_, x)| x.length).sum_sectors()
     }
 
     pub fn to_save(&self) -> TempDevSave {

@@ -15,17 +15,11 @@ use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_I
 use nix::errno::EEXIST;
 
 use types::{Sectors, DataBlocks, FroyoError, FroyoResult, InternalError};
-use raid::{RaidSegment, RaidLinearDev, RaidLinearDevSave};
+use raid::{RaidSegment, RaidLinearDev};
 use dmdevice::DmDevice;
 use consts::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThinPoolDevSave {
-    pub data_block_size: Sectors,
-    pub low_water_blocks: DataBlocks,
-    pub meta_dev: RaidLinearDevSave,
-    pub data_dev: RaidLinearDevSave,
-}
+pub use serialize::{ThinPoolDevSave, ThinDevSave};
 
 #[derive(Debug, Clone)]
 pub struct ThinPoolDev {
@@ -245,13 +239,6 @@ impl ThinPoolDev {
     pub fn used_sectors(&self) -> Sectors {
         self.meta_dev.borrow().length() + self.data_dev.borrow().length()
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThinDevSave {
-    pub name: String,
-    pub thin_number: u32,
-    pub size: Sectors,
 }
 
 #[derive(Debug, Clone)]

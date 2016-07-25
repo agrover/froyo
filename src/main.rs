@@ -2,9 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#![feature(custom_derive, iter_arith_traits, custom_attribute, plugin, const_fn)]
-#![plugin(serde_macros)]
-#![plugin(clippy)]
+#![cfg_attr(feature = "clippy", feature(plugin))]
+#![cfg_attr(feature = "clippy", plugin(clippy))]
+#![cfg_attr(not(feature = "clippy"), allow(unknown_lints))]
 
 #![allow(match_same_arms)] // we seem to have instances where same arms are good
 #![allow(if_not_else)]
@@ -50,6 +50,10 @@ mod dmdevice;
 mod thin;
 mod util;
 mod dbus_api;
+
+mod serialize {
+    include!(concat!(env!("OUT_DIR"), "/serialize.rs"));
+}
 
 use std::io::Write;
 use std::error::Error;
