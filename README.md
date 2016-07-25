@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/agrover/froyo.svg?branch=master)](https://travis-ci.org/agrover/froyo)
+
 # Froyo
 
 Semi-automated bulk storage management
