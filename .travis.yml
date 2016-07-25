@@ -1,4 +1,9 @@
 language: rust
+
+before_install:
+  - sudo apt-get -qq update
+  - sudo apt-get install -y libdbus-1
+
 rust:
   - stable
   - beta
