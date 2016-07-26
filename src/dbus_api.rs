@@ -11,10 +11,11 @@ use std::error::Error;
 use dbus::{Connection, NameFlag};
 use dbus::tree::{Factory, Tree, Property, MethodFn, MethodErr, EmitsChangedSignal, Interface};
 use dbus::MessageItem;
+use dbus;
 
 use froyo::Froyo;
 use blockdev::{BlockMember, BlockDevs};
-use types::FroyoResult;
+use types::{FroyoResult, FroyoError};
 
 #[derive(Debug, Clone)]
 pub struct DbusContext<'a> {
@@ -29,9 +30,11 @@ pub struct DbusContext<'a> {
 impl<'a> DbusContext<'a> {
     pub fn update_one(prop: &Arc<Property<MethodFn<'a>>>, m: MessageItem)
                       -> FroyoResult<()> {
-        prop.set_value(m);
-        // TODO: result is signals we need to be sending for PropertyChanged???
-        Ok(())
+        match prop.set_value(m) {
+            Ok(_) => Ok(()), // TODO: return signals
+            Err(()) => Err(FroyoError::Dbus(dbus::Error::new_custom(
+                "UpdateError", "Could not update property with value")))
+        }
     }
 
     pub fn get_block_devices_msgitem(block_devs: &BlockDevs)
