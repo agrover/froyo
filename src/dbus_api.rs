@@ -69,7 +69,7 @@ fn froyo_interface<'a>(froyo: &Rc<RefCell<Froyo<'a>>>) -> Interface<MethodFn<'a>
     let mut iface = iface.add_m(
         f.method("SetName", move |m, _, _| {
             let mut items = m.get_items();
-            if items.len() < 1 {
+            if items.is_empty() {
                 return Err(MethodErr::no_arg());
             }
 
@@ -145,7 +145,7 @@ fn froyo_interface<'a>(froyo: &Rc<RefCell<Froyo<'a>>>) -> Interface<MethodFn<'a>
     let iface = iface.add_m(
         f.method("RemoveBlockDevice", move |m, _, _| {
             let mut items = m.get_items();
-            if items.len() < 1 {
+            if items.is_empty() {
                 return Err(MethodErr::no_arg());
             }
 
@@ -293,7 +293,7 @@ pub fn get_base_tree<'a>(
     let destroy_method = f
         .method("Destroy", move |m, _, _| {
             let mut items = m.get_items();
-            if items.len() < 1 {
+            if items.is_empty() {
                 return Err(MethodErr::no_arg());
             }
 
@@ -348,7 +348,7 @@ pub fn get_base_tree<'a>(
     let teardown_method = f
         .method("Teardown", move |m, _, _| {
             let mut items = m.get_items();
-            if items.len() < 1 {
+            if items.is_empty() {
                 return Err(MethodErr::no_arg());
             }
 

@@ -5,11 +5,11 @@
 #![cfg_attr(feature = "clippy", feature(plugin))]
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![cfg_attr(not(feature = "clippy"), allow(unknown_lints))]
-#![allow(match_same_arms)] // we seem to have instances where same arms are good
-#![allow(if_not_else)]
-#![allow(similar_names)]
-#![allow(used_underscore_binding)]
-#![allow(collapsible_if)]
+#![allow(clippy::match_same_arms)] // we seem to have instances where same arms are good
+#![allow(clippy::if_not_else)]
+#![allow(clippy::similar_names)]
+#![allow(clippy::used_underscore_binding)]
+#![allow(clippy::collapsible_if)]
 #![allow(dead_code)] // only temporary, until more stuff is filled in
 
 extern crate devicemapper;
@@ -459,7 +459,7 @@ fn teardown(args: &ArgMatches) -> FroyoResult<()> {
 
 fn dump_meta(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
-    match Froyo::find(&name)? {
+    match Froyo::find(name)? {
         Some(f) => println!("{}", f.to_metadata_pretty()?),
         None => {
             return Err(FroyoError::Froyo(InternalError(

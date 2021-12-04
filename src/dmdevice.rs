@@ -34,7 +34,7 @@ impl DmDevice {
                 di
             }
             Err(_) => {
-                dm.device_create(&name, None, DmFlags::empty())?;
+                dm.device_create(name, None, DmFlags::empty())?;
                 let di = dm.table_load(id, table)?;
                 dm.device_suspend(id, DmFlags::empty())?;
 
@@ -112,7 +112,7 @@ impl DmDevice {
         let sectors = blkdev_size(&f)? / SECTOR_SIZE;
         let buf = vec![0u8; SECTOR_SIZE as usize];
         for _ in 0..sectors {
-            f.write(&buf)?;
+            f.write_all(&buf)?;
         }
 
         Ok(())

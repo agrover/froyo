@@ -25,7 +25,7 @@ pub const MDAX_ZONE_SECTORS: Sectors = Sectors(1020);
 pub const MDAA_ZONE_OFFSET: SectorOffset = SectorOffset(8);
 pub const MDAB_ZONE_OFFSET: SectorOffset = SectorOffset(1028);
 
-pub const FRO_MAGIC: &'static [u8] = b"!IamFroy0\x86\xffGO\x02^\x41";
+pub const FRO_MAGIC: &[u8] = b"!IamFroy0\x86\xffGO\x02^\x41";
 pub const STRIPE_SECTORS: Sectors = Sectors(MEGA / SECTOR_SIZE);
 
 // No devs smaller than around a gig

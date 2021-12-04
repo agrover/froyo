@@ -29,7 +29,7 @@ use util::blkdev_size;
 pub use crate::serialize::{BlockDevSave, LinearDevSave, LinearSegment};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MDA {
+pub struct Mda {
     pub last_updated: Timespec,
     length: u32,
     crc: u32,
@@ -43,8 +43,8 @@ pub struct BlockDev {
     pub id: String,
     pub path: PathBuf,
     pub sectors: Sectors,
-    pub mdaa: MDA,
-    pub mdab: MDA,
+    pub mdaa: Mda,
+    pub mdab: Mda,
     // Key is meta_dev dm name
     pub linear_devs: BTreeMap<String, Rc<RefCell<LinearDev>>>,
 }
@@ -87,7 +87,7 @@ impl BlockDev {
 
         if !force {
             let mut buf = [0u8; 4096];
-            f.read(&mut buf)?;
+            f.read_exact(&mut buf)?;
 
             if buf.iter().any(|x| *x != 0) {
                 return Err(FroyoError::Io(io::Error::new(
@@ -115,16 +115,16 @@ impl BlockDev {
         let mut bd = BlockDev {
             froyodev_id: froyodev_id.to_owned(),
             id: Uuid::new_v4().to_simple_string(),
-            dev: dev,
+            dev,
             path: path.to_owned(),
             sectors: Sectors(dev_size / SECTOR_SIZE),
-            mdaa: MDA {
+            mdaa: Mda {
                 last_updated: Timespec::new(0, 0),
                 length: 0,
                 crc: 0,
                 offset: MDAA_ZONE_OFFSET,
             },
-            mdab: MDA {
+            mdab: Mda {
                 last_updated: Timespec::new(0, 0),
                 length: 0,
                 crc: 0,
@@ -151,7 +151,7 @@ impl BlockDev {
 
         let mut buf = [0u8; HEADER_SIZE as usize];
         f.seek(SeekFrom::Start(SECTOR_SIZE))?;
-        f.read(&mut buf)?;
+        f.read_exact(&mut buf)?;
 
         if &buf[4..20] != FRO_MAGIC {
             return Err(FroyoError::Io(io::Error::new(
@@ -178,10 +178,10 @@ impl BlockDev {
         Ok(BlockDev {
             froyodev_id: froyodev_id.to_owned(),
             id: id.to_owned(),
-            dev: dev,
+            dev,
             path: path.to_owned(),
-            sectors: sectors,
-            mdaa: MDA {
+            sectors,
+            mdaa: Mda {
                 last_updated: Timespec::new(
                     LittleEndian::read_u64(&buf[64..72]) as i64,
                     LittleEndian::read_u32(&buf[72..76]) as i32,
@@ -190,7 +190,7 @@ impl BlockDev {
                 crc: LittleEndian::read_u32(&buf[80..84]),
                 offset: MDAA_ZONE_OFFSET,
             },
-            mdab: MDA {
+            mdab: Mda {
                 last_updated: Timespec::new(
                     LittleEndian::read_u64(&buf[96..104]) as i64,
                     LittleEndian::read_u32(&buf[104..108]) as i32,
@@ -214,7 +214,7 @@ impl BlockDev {
         Ok(read_dir("/dev")?
             .into_iter()
             .filter_map(|dir_e| {
-                if dir_e.is_ok() {
+                if let Ok(..) = dir_e {
                     Some(dir_e.unwrap().path())
                 } else {
                     None
@@ -225,14 +225,14 @@ impl BlockDev {
     }
 
     fn used_areas(&self) -> Vec<(SectorOffset, Sectors)> {
-        let mut used = Vec::new();
-
         // Flag start and end mda zones as used
-        used.push((SectorOffset(0), MDA_ZONE_SECTORS));
-        used.push((
-            SectorOffset(*self.sectors - *MDA_ZONE_SECTORS),
-            MDA_ZONE_SECTORS,
-        ));
+        let mut used = vec![
+            (SectorOffset(0), MDA_ZONE_SECTORS),
+            (
+                SectorOffset(*self.sectors - *MDA_ZONE_SECTORS),
+                MDA_ZONE_SECTORS,
+            ),
+        ];
 
         for dev in self.linear_devs.values() {
             for seg in &dev.borrow().meta_segments {
@@ -269,7 +269,7 @@ impl BlockDev {
         self.avail_areas().into_iter().max_by_key(|&(_, len)| len)
     }
 
-    // Read metadata from newest MDA
+    // Read metadata from newest Mda
     pub fn read_mdax(&self) -> FroyoResult<Vec<u8>> {
         let younger_mda = match self.mdaa.last_updated.cmp(&self.mdab.last_updated) {
             Ordering::Less => &self.mdab,
@@ -280,7 +280,7 @@ impl BlockDev {
         if younger_mda.last_updated == Timespec::new(0, 0) {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                "Neither MDA region is in use",
+                "Neither Mda region is in use",
             )));
         }
 
@@ -294,7 +294,7 @@ impl BlockDev {
         if younger_mda.crc != crc32::checksum_ieee(&buf) {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                "Froyo MDA CRC failed",
+                "Froyo Mda CRC failed",
             )));
             // TODO: Read backup copy
         }
@@ -302,7 +302,7 @@ impl BlockDev {
         Ok(buf)
     }
 
-    // Write metadata to least-recently-written MDA
+    // Write metadata to least-recently-written Mda
     fn write_mdax(&mut self, time: &Timespec, metadata: &[u8]) -> FroyoResult<()> {
         let older_mda = match self.mdaa.last_updated.cmp(&self.mdab.last_updated) {
             Ordering::Less => &mut self.mdaa,
@@ -313,7 +313,7 @@ impl BlockDev {
         if metadata.len() as u64 > *MDAX_ZONE_SECTORS * SECTOR_SIZE {
             return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("Metadata too large for MDA, {} bytes", metadata.len()),
+                format!("Metadata too large for Mda, {} bytes", metadata.len()),
             )));
         }
 
@@ -325,10 +325,10 @@ impl BlockDev {
 
         // write metadata to disk
         f.seek(SeekFrom::Start(*older_mda.offset * SECTOR_SIZE))?;
-        f.write_all(&metadata)?;
+        f.write_all(metadata)?;
         f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64)))?;
         f.seek(SeekFrom::Current((*older_mda.offset * SECTOR_SIZE) as i64))?;
-        f.write_all(&metadata)?;
+        f.write_all(metadata)?;
         f.flush()?;
 
         Ok(())
@@ -462,7 +462,7 @@ impl BlockDevs {
                     .map(|(offset, len)| (bd.clone(), offset, len))
                     .collect::<Vec<_>>()
             })
-            .flat_map(|x| x)
+            .flatten()
             .collect()
     }
 
@@ -496,10 +496,7 @@ impl BlockDevs {
 
 impl LinearSegment {
     pub fn new(start: SectorOffset, length: Sectors) -> LinearSegment {
-        LinearSegment {
-            start: start,
-            length: length,
-        }
+        LinearSegment { start, length }
     }
 }
 
@@ -581,9 +578,9 @@ impl LinearDev {
         let data_dev = DmDevice::new(dm, &data_dm_name, &table)?;
 
         Ok(LinearDev {
-            meta_dev: meta_dev,
+            meta_dev,
             meta_segments: meta_segments.to_vec(),
-            data_dev: data_dev,
+            data_dev,
             data_segments: data_segments.to_vec(),
             parent: Rc::downgrade(blockdev),
         })
@@ -601,7 +598,7 @@ impl LinearDev {
         LinearDevSave {
             meta_segments: self.meta_segments.clone(),
             data_segments: self.data_segments.clone(),
-            parent: parent,
+            parent,
         }
     }
 

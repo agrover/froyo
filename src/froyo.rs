@@ -56,10 +56,7 @@ pub enum FroyoState {
 
 impl FroyoState {
     pub fn is_reshaping(&self) -> bool {
-        match *self {
-            FroyoState::Good(FroyoRunningState::Reshaping(_)) => true,
-            _ => false,
-        }
+        matches!(*self, FroyoState::Good(FroyoRunningState::Reshaping(_)))
     }
 }
 
@@ -142,9 +139,9 @@ impl<'a> Froyo<'a> {
         Ok(Froyo {
             name: name.to_owned(),
             id: froyo_id,
-            block_devs: block_devs,
-            raid_devs: raid_devs,
-            thin_pool_dev: thin_pool_dev,
+            block_devs,
+            raid_devs,
+            thin_pool_dev,
             thin_devs: Vec::new(),
             throttled: false,
             last_state: FroyoState::Initializing,
@@ -189,7 +186,7 @@ impl<'a> Froyo<'a> {
                 .raid_devs
                 .temp_dev
                 .as_ref()
-                .map(|ref td| td.borrow().to_save()),
+                .map(|td| td.borrow().to_save()),
             thin_pool_dev: self.thin_pool_dev.to_save(),
             thin_devs: self.thin_devs.iter().map(|x| x.to_save()).collect(),
         }
@@ -316,7 +313,7 @@ impl<'a> Froyo<'a> {
             raid_segments.push(raid_seg);
         }
 
-        let meta_raid_dev = RaidLinearDev::setup(&dm, &meta_name, &tpd.meta_dev.id, raid_segments)?;
+        let meta_raid_dev = RaidLinearDev::setup(dm, &meta_name, &tpd.meta_dev.id, raid_segments)?;
 
         let data_name = format!("thin-data-{}", froyo_save.id);
         let mut raid_segments = Vec::new();
@@ -329,7 +326,7 @@ impl<'a> Froyo<'a> {
             raid_segments.push(raid_seg);
         }
 
-        let data_raid_dev = RaidLinearDev::setup(&dm, &data_name, &tpd.data_dev.id, raid_segments)?;
+        let data_raid_dev = RaidLinearDev::setup(dm, &data_name, &tpd.data_dev.id, raid_segments)?;
 
         ThinPoolDev::setup(
             dm,
@@ -346,13 +343,13 @@ impl<'a> Froyo<'a> {
         froyo_id: String,
         found_blockdevs: Vec<BlockDev>,
     ) -> FroyoResult<Froyo<'a>> {
-        let block_devs = Froyo::setup_blockdevs(&froyo_save, found_blockdevs)?;
+        let block_devs = Froyo::setup_blockdevs(froyo_save, found_blockdevs)?;
 
         let dm = DM::new()?;
 
-        let raid_devs = RaidDevs::setup(&dm, &froyo_save, &block_devs)?;
+        let raid_devs = RaidDevs::setup(&dm, froyo_save, &block_devs)?;
 
-        let thin_pool_dev = Froyo::setup_thinpool(&dm, &froyo_save, &raid_devs)?;
+        let thin_pool_dev = Froyo::setup_thinpool(&dm, froyo_save, &raid_devs)?;
 
         let mut thin_devs = Vec::new();
         for std in &froyo_save.thin_devs {
@@ -368,11 +365,11 @@ impl<'a> Froyo<'a> {
 
         let mut froyo = Froyo {
             name: froyo_save.name.to_owned(),
-            id: froyo_id.to_owned(),
-            block_devs: block_devs,
-            raid_devs: raid_devs,
-            thin_pool_dev: thin_pool_dev,
-            thin_devs: thin_devs,
+            id: froyo_id,
+            block_devs,
+            raid_devs,
+            thin_pool_dev,
+            thin_devs,
             throttled: false,
             last_state: FroyoState::Good(FroyoRunningState::Good),
             dbus_context: None,
@@ -688,10 +685,7 @@ impl<'a> Froyo<'a> {
                         }
                     }
                 }
-                match ld_index {
-                    None => None,
-                    Some(ld_index) => Some((rd, ld_index)),
-                }
+                ld_index.map(|ld_index| (rd, ld_index))
             })
             .collect::<Vec<_>>();
 
@@ -859,7 +853,7 @@ impl<'a> Froyo<'a> {
             // reshaping to regain redundancy.
             self.raid_devs.temp_dev = Some(mirror.dest.clone());
 
-            let removed_rd = removed.iter().next().unwrap().parent.raid();
+            let removed_rd = removed.get(0).unwrap().parent.raid();
             if removed.iter().any(|rs| rs.parent.raid() != removed_rd) {
                 panic!("all removed raidsegs are not on the same raiddev!");
             }
@@ -1229,7 +1223,7 @@ impl<'a> Froyo<'a> {
                 .iter()
                 .map(|rs| {
                     (
-                        TempLayer::Raid(rs.parent.raid().clone()),
+                        TempLayer::Raid(rs.parent.raid()),
                         LinearSegment::new(rs.start, rs.length),
                     )
                 })
@@ -1243,7 +1237,7 @@ impl<'a> Froyo<'a> {
             &dm,
             &self.id,
             &[(
-                TempLayer::Raid(raid_seg.parent.raid().clone()),
+                TempLayer::Raid(raid_seg.parent.raid()),
                 LinearSegment::new(raid_seg.start, raid_seg.length),
             )],
         )?;
@@ -1316,19 +1310,21 @@ impl<'a> Froyo<'a> {
             .iter()
             .map(|&(_, rs)| {
                 (
-                    TempLayer::Raid(rs.parent.raid().clone()),
+                    TempLayer::Raid(rs.parent.raid()),
                     LinearSegment::new(rs.start, rs.length),
                 )
             })
             .collect::<Vec<_>>();
         let spc_needed = raid_segs.iter().map(|&(_, ls)| ls.length).sum_sectors();
 
-        let scratch_areas =
-            self.block_devs
-                .get_linear_segments(spc_needed)
-                .ok_or(FroyoError::Froyo(InternalError(
+        let scratch_areas = self
+            .block_devs
+            .get_linear_segments(spc_needed)
+            .ok_or_else(|| {
+                FroyoError::Froyo(InternalError(
                     format!("No scratch space for raidseg {}", *spc_needed).into(),
-                )))?;
+                ))
+            })?;
         let scratch_areas = scratch_areas
             .into_iter()
             .map(|(bd, ls)| (TempLayer::Block(bd), ls))
@@ -1414,7 +1410,7 @@ impl<'a> Froyo<'a> {
             .iter()
             .map(|rs| {
                 (
-                    TempLayer::Raid(rs.parent.raid().clone()),
+                    TempLayer::Raid(rs.parent.raid()),
                     LinearSegment::new(rs.start, rs.length),
                 )
             })

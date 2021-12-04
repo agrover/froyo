@@ -54,9 +54,9 @@ impl MirrorDev {
 
         Ok(MirrorDev {
             mirror: mirror_dev,
-            src: src,
-            dest: dest,
-            linear_dev: linear_dev,
+            src,
+            dest,
+            linear_dev,
             linear_dev_idxs: linear_dev_idxs.to_vec(),
         })
     }
@@ -168,8 +168,8 @@ impl TempDev {
         let dmdev = DmDevice::new(dm, &dm_name, &table)?;
 
         Ok(TempDev {
-            id: id,
-            dmdev: dmdev,
+            id,
+            dmdev,
             segments: segments.to_vec(),
         })
     }
