@@ -2,22 +2,18 @@
 name = "froyo"
 version = "0.1.0"
 authors = ["Andy Grover <agrover@redhat.com>"]
-build = "build.rs"
-
-[build-dependencies]
-serde_codegen = "0.7"
 
 [dependencies]
 clippy = { version = "0", optional = true }
-devicemapper = "0.4.0"
+devicemapper = "0.4.7"
 clap = "1"
-nix = "0"
+nix = "0.23.0"
 crc = "1"
 byteorder = "0.3.13"
 uuid = "0.1.18"
 time = "0.1"
-serde = "0.7"
-serde_json = "0.7"
+serde = { version = "1.0.130", features = ["derive"] }
+serde_json = "1.0.72"
 custom_derive = "0.1"
 bytesize = "0.1.1"
 dbus = "0.3"

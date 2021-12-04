@@ -2,32 +2,31 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::io::{Read, Write, ErrorKind, Seek, SeekFrom};
-use std::fs::{OpenOptions, read_dir};
-use std::path::{Path, PathBuf};
-use std::io;
-use std::rc::{Rc, Weak};
 use std::cell::RefCell;
-use std::str::{FromStr, from_utf8};
+use std::cmp::min;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::error::Error;
-use std::cmp::min;
+use std::fs::{read_dir, OpenOptions};
+use std::io;
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use std::rc::{Rc, Weak};
+use std::str::{from_utf8, FromStr};
 
+use byteorder::{ByteOrder, LittleEndian};
+use bytesize::ByteSize;
+use crc::crc32;
+use devicemapper::{Device, DM};
 use nix::sys::stat;
 use time::Timespec;
-use devicemapper::{DM, Device};
-use crc::crc32;
-use byteorder::{LittleEndian, ByteOrder};
 use uuid::Uuid;
-use bytesize::ByteSize;
 
-use types::{Sectors, SumSectors, SectorOffset, FroyoResult, FroyoError};
 use consts::*;
-use util::blkdev_size;
 use dmdevice::DmDevice;
+use types::{FroyoError, FroyoResult, SectorOffset, Sectors, SumSectors};
+use util::blkdev_size;
 
-pub use serialize::{BlockDevSave, LinearSegment, LinearDevSave};
+pub use crate::serialize::{BlockDevSave, LinearDevSave, LinearSegment};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MDA {
@@ -65,44 +64,52 @@ impl BlockMember {
     }
 }
 
-
 impl BlockDev {
-    pub fn new(froyodev_id: &str, path: &Path, force: bool)
-                      -> FroyoResult<BlockDev> {
-        let pstat = try!(stat::stat(path));
+    pub fn new(froyodev_id: &str, path: &Path, force: bool) -> FroyoResult<BlockDev> {
+        let pstat = stat::stat(path)?;
 
         if pstat.st_mode & 0x6000 != 0x6000 {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} is not a block device", path.display()))));
+                format!("{} is not a block device", path.display()),
+            )));
         }
 
-        let dev = try!(Device::from_str(&path.to_string_lossy()));
+        let dev = Device::from_str(&path.to_string_lossy())?;
 
         // map_err so we can improve the error message
-        let mut f = try!(OpenOptions::new().read(true).open(path)
-                         .map_err(|_| io::Error::new(
-                             ErrorKind::PermissionDenied,
-                             format!("Could not open {}", path.display()))));
+        let mut f = OpenOptions::new().read(true).open(path).map_err(|_| {
+            io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!("Could not open {}", path.display()),
+            )
+        })?;
 
         if !force {
             let mut buf = [0u8; 4096];
-            try!(f.read(&mut buf));
+            f.read(&mut buf)?;
 
             if buf.iter().any(|x| *x != 0) {
                 return Err(FroyoError::Io(io::Error::new(
                     ErrorKind::InvalidInput,
-                    format!("First 4K of {} is not zeroed, need to use --force",
-                            path.display()))));
+                    format!(
+                        "First 4K of {} is not zeroed, need to use --force",
+                        path.display()
+                    ),
+                )));
             }
         }
 
-        let dev_size = try!(blkdev_size(&f));
+        let dev_size = blkdev_size(&f)?;
         if dev_size < MIN_DEV_SIZE {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} too small, {} minimum", path.display(),
-                        ByteSize::b(MIN_DEV_SIZE as usize).to_string(true)))));
+                format!(
+                    "{} too small, {} minimum",
+                    path.display(),
+                    ByteSize::b(MIN_DEV_SIZE as usize).to_string(true)
+                ),
+            )));
         }
 
         let mut bd = BlockDev {
@@ -112,13 +119,13 @@ impl BlockDev {
             path: path.to_owned(),
             sectors: Sectors(dev_size / SECTOR_SIZE),
             mdaa: MDA {
-                last_updated: Timespec::new(0,0),
+                last_updated: Timespec::new(0, 0),
                 length: 0,
                 crc: 0,
                 offset: MDAA_ZONE_OFFSET,
             },
             mdab: MDA {
-                last_updated: Timespec::new(0,0),
+                last_updated: Timespec::new(0, 0),
                 length: 0,
                 crc: 0,
                 offset: MDAB_ZONE_OFFSET,
@@ -126,28 +133,31 @@ impl BlockDev {
             linear_devs: BTreeMap::new(),
         };
 
-        try!(bd.write_mda_header());
+        bd.write_mda_header()?;
 
         Ok(bd)
     }
 
     pub fn setup(path: &Path) -> FroyoResult<BlockDev> {
-        let dev = try!(Device::from_str(&path.to_string_lossy()));
+        let dev = Device::from_str(&path.to_string_lossy())?;
 
         // map_err so we can improve the error message
-        let mut f = try!(OpenOptions::new().read(true).open(path)
-                         .map_err(|_| io::Error::new(
-                             ErrorKind::PermissionDenied,
-                             format!("Could not open {}", path.display()))));
+        let mut f = OpenOptions::new().read(true).open(path).map_err(|_| {
+            io::Error::new(
+                ErrorKind::PermissionDenied,
+                format!("Could not open {}", path.display()),
+            )
+        })?;
 
         let mut buf = [0u8; HEADER_SIZE as usize];
-        try!(f.seek(SeekFrom::Start(SECTOR_SIZE)));
-        try!(f.read(&mut buf));
+        f.seek(SeekFrom::Start(SECTOR_SIZE))?;
+        f.read(&mut buf)?;
 
         if &buf[4..20] != FRO_MAGIC {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} is not a Froyo device", path.display()))));
+                format!("{} is not a Froyo device", path.display()),
+            )));
         }
 
         let crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
@@ -155,11 +165,12 @@ impl BlockDev {
             dbgp!("{} Froyo header CRC failed", path.display());
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
-                format!("{} Froyo header CRC failed", path.display()))));
+                format!("{} Froyo header CRC failed", path.display()),
+            )));
             // TODO: Try to read end-of-disk copy
         }
 
-        let sectors = Sectors(try!(blkdev_size(&f)) / SECTOR_SIZE);
+        let sectors = Sectors(blkdev_size(&f)? / SECTOR_SIZE);
 
         let id = from_utf8(&buf[32..64]).unwrap();
         let froyodev_id = from_utf8(&buf[128..160]).unwrap();
@@ -173,7 +184,8 @@ impl BlockDev {
             mdaa: MDA {
                 last_updated: Timespec::new(
                     LittleEndian::read_u64(&buf[64..72]) as i64,
-                    LittleEndian::read_u32(&buf[72..76]) as i32),
+                    LittleEndian::read_u32(&buf[72..76]) as i32,
+                ),
                 length: LittleEndian::read_u32(&buf[76..80]),
                 crc: LittleEndian::read_u32(&buf[80..84]),
                 offset: MDAA_ZONE_OFFSET,
@@ -181,7 +193,8 @@ impl BlockDev {
             mdab: MDA {
                 last_updated: Timespec::new(
                     LittleEndian::read_u64(&buf[96..104]) as i64,
-                    LittleEndian::read_u32(&buf[104..108]) as i32),
+                    LittleEndian::read_u32(&buf[104..108]) as i32,
+                ),
                 length: LittleEndian::read_u32(&buf[108..112]),
                 crc: LittleEndian::read_u32(&buf[112..116]),
                 offset: MDAB_ZONE_OFFSET,
@@ -198,12 +211,17 @@ impl BlockDev {
     }
 
     pub fn find_all() -> FroyoResult<Vec<BlockDev>> {
-        Ok(try!(read_dir("/dev"))
-           .into_iter()
-           .filter_map(|dir_e| if dir_e.is_ok()
-                       { Some(dir_e.unwrap().path()) } else { None } )
-           .filter_map(|path| BlockDev::setup(&path).ok())
-           .collect::<Vec<_>>())
+        Ok(read_dir("/dev")?
+            .into_iter()
+            .filter_map(|dir_e| {
+                if dir_e.is_ok() {
+                    Some(dir_e.unwrap().path())
+                } else {
+                    None
+                }
+            })
+            .filter_map(|path| BlockDev::setup(&path).ok())
+            .collect::<Vec<_>>())
     }
 
     fn used_areas(&self) -> Vec<(SectorOffset, Sectors)> {
@@ -211,7 +229,10 @@ impl BlockDev {
 
         // Flag start and end mda zones as used
         used.push((SectorOffset(0), MDA_ZONE_SECTORS));
-        used.push((SectorOffset(*self.sectors - *MDA_ZONE_SECTORS), MDA_ZONE_SECTORS));
+        used.push((
+            SectorOffset(*self.sectors - *MDA_ZONE_SECTORS),
+            MDA_ZONE_SECTORS,
+        ));
 
         for dev in self.linear_devs.values() {
             for seg in &dev.borrow().meta_segments {
@@ -245,8 +266,7 @@ impl BlockDev {
     }
 
     pub fn largest_avail_area(&self) -> Option<(SectorOffset, Sectors)> {
-        self.avail_areas().into_iter()
-            .max_by_key(|&(_, len)| len)
+        self.avail_areas().into_iter().max_by_key(|&(_, len)| len)
     }
 
     // Read metadata from newest MDA
@@ -257,21 +277,25 @@ impl BlockDev {
             Ordering::Equal => &self.mdab,
         };
 
-        if younger_mda.last_updated == Timespec::new(0,0) {
+        if younger_mda.last_updated == Timespec::new(0, 0) {
             return Err(FroyoError::Io(io::Error::new(
-                ErrorKind::InvalidInput, "Neither MDA region is in use")))
+                ErrorKind::InvalidInput,
+                "Neither MDA region is in use",
+            )));
         }
 
-        let mut f = try!(OpenOptions::new().read(true).open(&self.path));
+        let mut f = OpenOptions::new().read(true).open(&self.path)?;
         let mut buf = vec![0; younger_mda.length as usize];
 
         // read metadata from disk
-        try!(f.seek(SeekFrom::Start(*younger_mda.offset * SECTOR_SIZE)));
-        try!(f.read_exact(&mut buf));
+        f.seek(SeekFrom::Start(*younger_mda.offset * SECTOR_SIZE))?;
+        f.read_exact(&mut buf)?;
 
         if younger_mda.crc != crc32::checksum_ieee(&buf) {
             return Err(FroyoError::Io(io::Error::new(
-                ErrorKind::InvalidInput, "Froyo MDA CRC failed")))
+                ErrorKind::InvalidInput,
+                "Froyo MDA CRC failed",
+            )));
             // TODO: Read backup copy
         }
 
@@ -289,22 +313,23 @@ impl BlockDev {
         if metadata.len() as u64 > *MDAX_ZONE_SECTORS * SECTOR_SIZE {
             return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("Metadata too large for MDA, {} bytes", metadata.len()))))
+                format!("Metadata too large for MDA, {} bytes", metadata.len()),
+            )));
         }
 
         older_mda.crc = crc32::checksum_ieee(metadata);
         older_mda.length = metadata.len() as u32;
         older_mda.last_updated = *time;
 
-        let mut f = try!(OpenOptions::new().write(true).open(&self.path));
+        let mut f = OpenOptions::new().write(true).open(&self.path)?;
 
         // write metadata to disk
-        try!(f.seek(SeekFrom::Start(*older_mda.offset * SECTOR_SIZE)));
-        try!(f.write_all(&metadata));
-        try!(f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64))));
-        try!(f.seek(SeekFrom::Current((*older_mda.offset * SECTOR_SIZE) as i64)));
-        try!(f.write_all(&metadata));
-        try!(f.flush());
+        f.seek(SeekFrom::Start(*older_mda.offset * SECTOR_SIZE))?;
+        f.write_all(&metadata)?;
+        f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64)))?;
+        f.seek(SeekFrom::Current((*older_mda.offset * SECTOR_SIZE) as i64))?;
+        f.write_all(&metadata)?;
+        f.flush()?;
 
         Ok(())
     }
@@ -332,37 +357,37 @@ impl BlockDev {
         let hdr_crc = crc32::checksum_ieee(&buf[4..HEADER_SIZE as usize]);
         LittleEndian::write_u32(&mut buf[..4], hdr_crc);
 
-        try!(BlockDev::write_hdr_buf(&self.path, &buf));
+        BlockDev::write_hdr_buf(&self.path, &buf)?;
 
         Ok(())
     }
 
     pub fn wipe_mda_header(&mut self) -> FroyoResult<()> {
         let buf = [0u8; HEADER_SIZE as usize];
-        try!(BlockDev::write_hdr_buf(&self.path, &buf));
+        BlockDev::write_hdr_buf(&self.path, &buf)?;
         Ok(())
     }
 
     fn write_hdr_buf(path: &Path, buf: &[u8; HEADER_SIZE as usize]) -> FroyoResult<()> {
-        let mut f = try!(OpenOptions::new().write(true).open(path));
+        let mut f = OpenOptions::new().write(true).open(path)?;
         let zeroed = [0u8; (SECTOR_SIZE * 8) as usize];
 
         // Write 4K header to head & tail. Froyo stuff goes in sector 1.
-        try!(f.write_all(&zeroed[..SECTOR_SIZE as usize]));
-        try!(f.write_all(buf));
-        try!(f.write_all(&zeroed[(SECTOR_SIZE * 2) as usize..]));
-        try!(f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64))));
-        try!(f.write_all(&zeroed[..SECTOR_SIZE as usize]));
-        try!(f.write_all(buf));
-        try!(f.write_all(&zeroed[(SECTOR_SIZE * 2) as usize..]));
-        try!(f.flush());
+        f.write_all(&zeroed[..SECTOR_SIZE as usize])?;
+        f.write_all(buf)?;
+        f.write_all(&zeroed[(SECTOR_SIZE * 2) as usize..])?;
+        f.seek(SeekFrom::End(-(MDA_ZONE_SIZE as i64)))?;
+        f.write_all(&zeroed[..SECTOR_SIZE as usize])?;
+        f.write_all(buf)?;
+        f.write_all(&zeroed[(SECTOR_SIZE * 2) as usize..])?;
+        f.flush()?;
 
         Ok(())
     }
 
     pub fn save_state(&mut self, time: &Timespec, metadata: &[u8]) -> FroyoResult<()> {
-        try!(self.write_mdax(time, metadata));
-        try!(self.write_mda_header());
+        self.write_mdax(time, metadata)?;
+        self.write_mda_header()?;
 
         Ok(())
     }
@@ -379,7 +404,9 @@ impl BlockDev {
         let mut needed = size;
 
         for (start, len) in self.avail_areas() {
-            if needed == Sectors(0) { break }
+            if needed == Sectors(0) {
+                break;
+            }
 
             let to_use = min(needed, len);
 
@@ -396,14 +423,11 @@ pub struct BlockDevs(pub BTreeMap<String, BlockMember>);
 
 impl BlockDevs {
     pub fn to_save(&self) -> BTreeMap<String, BlockDevSave> {
-        self.0.iter()
-            .map(|(id, bd)| {
-                match *bd {
-                    BlockMember::Present(ref bd) =>
-                        (id.clone(), bd.borrow().to_save()),
-                    BlockMember::Absent(ref sbd) =>
-                        (id.clone(), sbd.clone()),
-                }
+        self.0
+            .iter()
+            .map(|(id, bd)| match *bd {
+                BlockMember::Present(ref bd) => (id.clone(), bd.borrow().to_save()),
+                BlockMember::Absent(ref sbd) => (id.clone(), sbd.clone()),
             })
             .collect()
     }
@@ -412,7 +436,7 @@ impl BlockDevs {
         for bd in self.0.values().filter_map(|bm| bm.present()) {
             if let Err(e) = bd.borrow_mut().wipe_mda_header() {
                 // keep going!
-                dbgp!("Error when wiping header: {}", e.description());
+                dbgp!("Error when wiping header: {}", e);
             }
         }
 
@@ -421,15 +445,20 @@ impl BlockDevs {
 
     // Unused (non-redundant) space left on blockdevs
     pub fn unused_space(&self) -> Sectors {
-        self.avail_areas().iter().map(|&(_, _, len)| len).sum_sectors()
+        self.avail_areas()
+            .iter()
+            .map(|&(_, _, len)| len)
+            .sum_sectors()
     }
 
     pub fn avail_areas(&self) -> Vec<(Rc<RefCell<BlockDev>>, SectorOffset, Sectors)> {
-        self.0.values()
+        self.0
+            .values()
             .filter_map(|bd| bd.present())
             .map(|bd| {
                 let areas = bd.borrow().avail_areas();
-                areas.into_iter()
+                areas
+                    .into_iter()
                     .map(|(offset, len)| (bd.clone(), offset, len))
                     .collect::<Vec<_>>()
             })
@@ -437,20 +466,24 @@ impl BlockDevs {
             .collect()
     }
 
-    pub fn get_linear_segments(&self, size: Sectors)
-                               -> Option<Vec<(Rc<RefCell<BlockDev>>, LinearSegment)>> {
+    pub fn get_linear_segments(
+        &self,
+        size: Sectors,
+    ) -> Option<Vec<(Rc<RefCell<BlockDev>>, LinearSegment)>> {
         let mut needed: Sectors = size;
         let mut segs = Vec::new();
 
-        for bd in self.0.values()
-            .filter_map(|bm| bm.present())
-        {
-            if needed == Sectors(0) { break }
+        for bd in self.0.values().filter_map(|bm| bm.present()) {
+            if needed == Sectors(0) {
+                break;
+            }
 
             let (gotten, r_segs) = bd.borrow().get_some_space(needed);
-            segs.extend(r_segs.iter()
-                        .map(|&(start, len)|
-                             (bd.clone(), LinearSegment::new(start, len))));
+            segs.extend(
+                r_segs
+                    .iter()
+                    .map(|&(start, len)| (bd.clone(), LinearSegment::new(start, len))),
+            );
             needed = needed - gotten;
         }
 
@@ -497,11 +530,10 @@ impl LinearDev {
         name: &str,
         blockdev: &Rc<RefCell<BlockDev>>,
         meta_segments: &[LinearSegment],
-        data_segments: &[LinearSegment])
-        -> FroyoResult<LinearDev> {
-
-        let ld = try!(Self::setup(dm, name, blockdev, meta_segments, data_segments));
-        try!(ld.meta_dev.clear());
+        data_segments: &[LinearSegment],
+    ) -> FroyoResult<LinearDev> {
+        let ld = Self::setup(dm, name, blockdev, meta_segments, data_segments)?;
+        ld.meta_dev.clear()?;
         Ok(ld)
     }
 
@@ -510,38 +542,45 @@ impl LinearDev {
         name: &str,
         blockdev: &Rc<RefCell<BlockDev>>,
         meta_segments: &[LinearSegment],
-        data_segments: &[LinearSegment])
-        -> FroyoResult<LinearDev> {
-
+        data_segments: &[LinearSegment],
+    ) -> FroyoResult<LinearDev> {
         let dev = blockdev.borrow().dev;
 
         // meta
         let mut table = Vec::new();
         let mut offset = SectorOffset(0);
         for seg in meta_segments {
-            let line = (*offset, *seg.length, "linear",
-                        format!("{}:{} {}", dev.major, dev.minor, *seg.start));
+            let line = (
+                *offset,
+                *seg.length,
+                "linear",
+                format!("{}:{} {}", dev.major, dev.minor, *seg.start),
+            );
             table.push(line);
             offset = offset + SectorOffset(*seg.length);
         }
 
         let meta_dm_name = format!("froyo-linear-meta-{}", name);
-        let meta_dev = try!(DmDevice::new(dm, &meta_dm_name, &*table));
+        let meta_dev = DmDevice::new(dm, &meta_dm_name, &*table)?;
 
         // data
         let mut table = Vec::new();
         let mut offset = SectorOffset(0);
         for seg in data_segments {
-            let line = (*offset, *seg.length, "linear",
-                        format!("{}:{} {}", dev.major, dev.minor, *seg.start));
+            let line = (
+                *offset,
+                *seg.length,
+                "linear",
+                format!("{}:{} {}", dev.major, dev.minor, *seg.start),
+            );
             table.push(line);
             offset = offset + SectorOffset(*seg.length);
         }
 
         let data_dm_name = format!("froyo-linear-data-{}", name);
-        let data_dev = try!(DmDevice::new(dm, &data_dm_name, &table));
+        let data_dev = DmDevice::new(dm, &data_dm_name, &table)?;
 
-        Ok(LinearDev{
+        Ok(LinearDev {
             meta_dev: meta_dev,
             meta_segments: meta_segments.to_vec(),
             data_dev: data_dev,
@@ -551,8 +590,8 @@ impl LinearDev {
     }
 
     pub fn teardown(&self, dm: &DM) -> FroyoResult<()> {
-        try!(self.meta_dev.teardown(dm));
-        try!(self.data_dev.teardown(dm));
+        self.meta_dev.teardown(dm)?;
+        self.data_dev.teardown(dm)?;
         Ok(())
     }
 

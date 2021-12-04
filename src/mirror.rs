@@ -2,21 +2,21 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
-use std::cell::RefCell;
 
-use uuid::Uuid;
 use devicemapper::DM;
+use uuid::Uuid;
 
-use froyo::FroyoSave;
-use types::{Sectors, SumSectors, SectorOffset, FroyoResult, FroyoError, InternalError};
+use blockdev::{BlockDev, BlockDevs, LinearSegment};
 use consts::*;
-use blockdev::{LinearSegment, BlockDev, BlockDevs};
 use dmdevice::DmDevice;
+use froyo::FroyoSave;
 use raid::{RaidDev, RaidLinearDev};
+use types::{FroyoError, FroyoResult, InternalError, SectorOffset, Sectors, SumSectors};
 
-pub use serialize::{TempDevSegmentSave, TempDevSave};
+pub use serialize::{TempDevSave, TempDevSegmentSave};
 
 #[derive(Debug, Clone)]
 pub struct MirrorDev {
@@ -36,15 +36,21 @@ impl MirrorDev {
         dest: Rc<RefCell<TempDev>>,
         length: Sectors,
         linear_dev: Rc<RefCell<RaidLinearDev>>,
-        linear_dev_idxs: &[usize])
-               -> FroyoResult<MirrorDev> {
-        let table = (0, *length, "raid",
-                     format!("raid1 1 {} 2 - {} - {}",
-                             *STRIPE_SECTORS,
-                             src.borrow().dmdev.dstr(),
-                             dest.borrow().dmdev.dstr()));
+        linear_dev_idxs: &[usize],
+    ) -> FroyoResult<MirrorDev> {
+        let table = (
+            0,
+            *length,
+            "raid",
+            format!(
+                "raid1 1 {} 2 - {} - {}",
+                *STRIPE_SECTORS,
+                src.borrow().dmdev.dstr(),
+                dest.borrow().dmdev.dstr()
+            ),
+        );
         let dm_name = format!("froyo-copymirror-{}", name);
-        let mirror_dev = try!(DmDevice::new(dm, &dm_name, &[table]));
+        let mirror_dev = DmDevice::new(dm, &dm_name, &[table])?;
 
         Ok(MirrorDev {
             mirror: mirror_dev,
@@ -56,14 +62,14 @@ impl MirrorDev {
     }
 
     pub fn teardown(&self, dm: &DM) -> FroyoResult<()> {
-        try!(self.mirror.teardown(dm));
-        try!(self.src.borrow().teardown(dm));
-        try!(self.dest.borrow().teardown(dm));
+        self.mirror.teardown(dm)?;
+        self.src.borrow().teardown(dm)?;
+        self.dest.borrow().teardown(dm)?;
         Ok(())
     }
 
     pub fn is_syncing(&self, dm: &DM) -> FroyoResult<bool> {
-        let mut status = try!(self.mirror.table_status(dm));
+        let mut status = self.mirror.table_status(dm)?;
 
         // See kernel's dm-raid.txt "Status Output"
         let status_line = status.pop().unwrap().3;
@@ -71,19 +77,21 @@ impl MirrorDev {
         if status_vals.len() < 5 {
             return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Kernel returned too few values from raid status")))
+                "Kernel returned too few values from raid status",
+            )));
         }
 
         dbgp!("status line {}", status_line);
         dbgp!("status {}", status_vals[2]);
         dbgp!("action {}", status_vals[4]);
 
-         match status_vals[4] {
-             "idle" => Ok(false),
-             "resync" => Ok(true),
-             action => Err(FroyoError::Froyo(InternalError(
-                 format!("Unexpected action: {}", action).into()))),
-         }
+        match status_vals[4] {
+            "idle" => Ok(false),
+            "resync" => Ok(true),
+            action => Err(FroyoError::Froyo(InternalError(
+                format!("Unexpected action: {}", action).into(),
+            ))),
+        }
     }
 }
 
@@ -140,21 +148,24 @@ impl TempDev {
     pub fn new(
         dm: &DM,
         name: &str,
-        segments: &[(TempLayer, LinearSegment)])
-        -> FroyoResult<TempDev> {
-
+        segments: &[(TempLayer, LinearSegment)],
+    ) -> FroyoResult<TempDev> {
         let mut table = Vec::new();
         let mut offset = SectorOffset(0);
         for &(ref dev, seg) in segments {
-            let line = (*offset, *seg.length, "linear",
-                        format!("{} {}", dev.dstr(), *seg.start));
+            let line = (
+                *offset,
+                *seg.length,
+                "linear",
+                format!("{} {}", dev.dstr(), *seg.start),
+            );
             table.push(line);
             offset = offset + SectorOffset(*seg.length);
         }
 
         let id = Uuid::new_v4().to_simple_string();
         let dm_name = format!("froyo-linear-temp-{}-{}", name, id);
-        let dmdev = try!(DmDevice::new(dm, &dm_name, &table));
+        let dmdev = DmDevice::new(dm, &dm_name, &table)?;
 
         Ok(TempDev {
             id: id,
@@ -166,27 +177,26 @@ impl TempDev {
     pub fn setup(
         dm: &DM,
         froyo_save: &FroyoSave,
-        block_devs: &BlockDevs)
-        -> FroyoResult<Option<TempDev>> {
-
+        block_devs: &BlockDevs,
+    ) -> FroyoResult<Option<TempDev>> {
         match froyo_save.temp_dev {
             None => Ok(None),
             Some(ref td) => {
                 let mut td_segs = Vec::new();
                 for seg in &td.segments {
-                    if let Some(bd) = block_devs.0.get(&seg.parent)
-                        .and_then(|bm| bm.present()) {
-                        td_segs.push((TempLayer::Block(bd.clone()),
-                                      LinearSegment::new(seg.start, seg.length)));
+                    if let Some(bd) = block_devs.0.get(&seg.parent).and_then(|bm| bm.present()) {
+                        td_segs.push((
+                            TempLayer::Block(bd.clone()),
+                            LinearSegment::new(seg.start, seg.length),
+                        ));
                     }
                 }
 
-                let td = try!(TempDev::new(dm, &froyo_save.id, &td_segs));
+                let td = TempDev::new(dm, &froyo_save.id, &td_segs)?;
                 Ok(Some(td))
             }
         }
     }
-
 
     pub fn dstr(&self) -> String {
         self.dmdev.dstr()
@@ -203,7 +213,9 @@ impl TempDev {
     pub fn to_save(&self) -> TempDevSave {
         TempDevSave {
             id: self.id.to_owned(),
-            segments: self.segments.iter()
+            segments: self
+                .segments
+                .iter()
                 .map(|&(ref tl, ls)| TempDevSegmentSave {
                     parent: tl.id(),
                     start: ls.start,

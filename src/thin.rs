@@ -2,24 +2,25 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::io;
-use std::process::Command;
-use std::fs;
-use std::path::PathBuf;
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::fs;
+use std::io;
+use std::path::PathBuf;
+use std::process::Command;
+use std::rc::Rc;
 
-use devicemapper::{DM, Device, DmFlags, DevId, DM_SUSPEND};
+use devicemapper::dm::{DevId, DM};
+use devicemapper::{consts::DmFlags, consts::DM_SUSPEND, Device};
+use nix::errno::Errno::EEXIST;
+use nix::sys::stat::{mknod, umask, Mode, SFlag};
 use uuid::Uuid;
-use nix::sys::stat::{mknod, umask, Mode, S_IFBLK, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
-use nix::errno::EEXIST;
 
-use types::{Sectors, DataBlocks, FroyoError, FroyoResult, InternalError};
-use raid::{RaidSegment, RaidLinearDev};
-use dmdevice::DmDevice;
 use consts::*;
+use dmdevice::DmDevice;
+use raid::{RaidLinearDev, RaidSegment};
+use types::{DataBlocks, FroyoError, FroyoResult, InternalError, Sectors};
 
-pub use serialize::{ThinPoolDevSave, ThinDevSave};
+pub use serialize::{ThinDevSave, ThinPoolDevSave};
 
 #[derive(Debug, Clone)]
 pub struct ThinPoolDev {
@@ -54,28 +55,31 @@ pub enum ThinPoolWorkingStatus {
 }
 
 impl ThinPoolDev {
-    pub fn new(dm: &DM,
-               id: &str,
-               meta_segs: Vec<RaidSegment>,
-               data_segs: Vec<RaidSegment>)
-               -> FroyoResult<ThinPoolDev> {
+    pub fn new(
+        dm: &DM,
+        id: &str,
+        meta_segs: Vec<RaidSegment>,
+        data_segs: Vec<RaidSegment>,
+    ) -> FroyoResult<ThinPoolDev> {
         // meta
         let meta_name = format!("thin-meta-{}", id);
-        let meta_raid_dev = try!(RaidLinearDev::new(
+        let meta_raid_dev = RaidLinearDev::new(
             dm,
             &meta_name,
             &Uuid::new_v4().to_simple_string(),
-            meta_segs));
+            meta_segs,
+        )?;
 
-        try!(meta_raid_dev.dev.clear());
+        meta_raid_dev.dev.clear()?;
 
         // data
         let data_name = format!("thin-data-{}", id);
-        let data_raid_dev = try!(RaidLinearDev::new(
+        let data_raid_dev = RaidLinearDev::new(
             dm,
             &data_name,
             &Uuid::new_v4().to_simple_string(),
-            data_segs));
+            data_segs,
+        )?;
 
         ThinPoolDev::setup(
             dm,
@@ -83,7 +87,8 @@ impl ThinPoolDev {
             DATA_BLOCK_SIZE,
             DataBlocks(TPOOL_LOW_WATER_BLOCKS),
             meta_raid_dev,
-            data_raid_dev)
+            data_raid_dev,
+        )
     }
 
     pub fn setup(
@@ -92,45 +97,51 @@ impl ThinPoolDev {
         data_block_size: Sectors,
         low_water_blocks: DataBlocks,
         meta_raid_dev: RaidLinearDev,
-        data_raid_dev: RaidLinearDev)
-        -> FroyoResult<ThinPoolDev> {
-
-        let params = format!("{} {} {} {} 1 skip_block_zeroing",
-                             meta_raid_dev.dev.dstr(),
-                             data_raid_dev.dev.dstr(),
-                             *data_block_size,
-                             *low_water_blocks);
+        data_raid_dev: RaidLinearDev,
+    ) -> FroyoResult<ThinPoolDev> {
+        let params = format!(
+            "{} {} {} {} 1 skip_block_zeroing",
+            meta_raid_dev.dev.dstr(),
+            data_raid_dev.dev.dstr(),
+            *data_block_size,
+            *low_water_blocks
+        );
         let table = [(0u64, *data_raid_dev.length(), "thin-pool", &*params)];
 
         let dm_name = format!("froyo-thin-pool-{}", id);
-        let pool_dev = try!(DmDevice::new(dm, &dm_name, &table));
+        let pool_dev = DmDevice::new(dm, &dm_name, &table)?;
 
         let tpool = ThinPoolDev {
             dev: pool_dev,
-            data_block_size: data_block_size,
-            low_water_blocks: low_water_blocks,
+            data_block_size,
+            low_water_blocks,
             params: params.clone(),
             meta_dev: Rc::new(RefCell::new(meta_raid_dev)),
             data_dev: Rc::new(RefCell::new(data_raid_dev)),
         };
 
         // TODO: if needs_check, run the check
-        match try!(tpool.status()) {
+        match tpool.status()? {
             ThinPoolStatus::Good((ThinPoolWorkingStatus::Good, _)) => {}
-            ThinPoolStatus::Good((ThinPoolWorkingStatus::NeedsCheck, _)) =>
+            ThinPoolStatus::Good((ThinPoolWorkingStatus::NeedsCheck, _)) => {
                 return Err(FroyoError::Froyo(InternalError(
-                    "Froyodev thin pool needs a check".into()))),
-            bad => return Err(FroyoError::Froyo(InternalError(
-                format!("Froyodev has a failed thin pool: {:?}", bad).into())))
+                    "Froyodev thin pool needs a check".into(),
+                )))
+            }
+            bad => {
+                return Err(FroyoError::Froyo(InternalError(
+                    format!("Froyodev has a failed thin pool: {:?}", bad).into(),
+                )))
+            }
         }
 
         Ok(tpool)
     }
 
     pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
-        try!(self.dev.teardown(dm));
-        try!(self.meta_dev.borrow_mut().teardown(dm));
-        try!(self.data_dev.borrow_mut().teardown(dm));
+        self.dev.teardown(dm)?;
+        self.meta_dev.borrow_mut().teardown(dm)?;
+        self.data_dev.borrow_mut().teardown(dm)?;
 
         Ok(())
     }
@@ -145,26 +156,28 @@ impl ThinPoolDev {
     }
 
     pub fn status(&self) -> FroyoResult<ThinPoolStatus> {
-        let dm = try!(DM::new());
+        let dm = DM::new()?;
 
-        let mut status = try!(self.dev.table_status(&dm));
+        let mut status = self.dev.table_status(&dm)?;
 
         if status.len() != 1 {
             return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Expected 1 line from thin pool status")))
+                "Expected 1 line from thin pool status",
+            )));
         }
 
         let status_line = status.pop().unwrap().3;
         if status_line.starts_with("Fail") {
-            return Ok(ThinPoolStatus::Fail)
+            return Ok(ThinPoolStatus::Fail);
         }
 
         let status_vals = status_line.split(' ').collect::<Vec<_>>();
         if status_vals.len() < 8 {
             return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Kernel returned too few values from thin pool status")))
+                "Kernel returned too few values from thin pool status",
+            )));
         }
 
         let usage = {
@@ -179,24 +192,35 @@ impl ThinPoolDev {
         };
 
         match status_vals[7] {
-            "-" => {},
-            "needs_check" => return Ok(ThinPoolStatus::Good(
-                (ThinPoolWorkingStatus::NeedsCheck, usage))),
-            _ => return Err(FroyoError::Io(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Kernel returned unexpected value in thin pool status")))
+            "-" => {}
+            "needs_check" => {
+                return Ok(ThinPoolStatus::Good((
+                    ThinPoolWorkingStatus::NeedsCheck,
+                    usage,
+                )))
+            }
+            _ => {
+                return Err(FroyoError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Kernel returned unexpected value in thin pool status",
+                )))
+            }
         }
 
         match status_vals[4] {
-            "rw" => Ok(ThinPoolStatus::Good(
-                (ThinPoolWorkingStatus::Good, usage))),
-            "ro" => Ok(ThinPoolStatus::Good(
-                (ThinPoolWorkingStatus::ReadOnly, usage))),
-            "out_of_data_space" => Ok(ThinPoolStatus::Good(
-                (ThinPoolWorkingStatus::OutOfSpace, usage))),
+            "rw" => Ok(ThinPoolStatus::Good((ThinPoolWorkingStatus::Good, usage))),
+            "ro" => Ok(ThinPoolStatus::Good((
+                ThinPoolWorkingStatus::ReadOnly,
+                usage,
+            ))),
+            "out_of_data_space" => Ok(ThinPoolStatus::Good((
+                ThinPoolWorkingStatus::OutOfSpace,
+                usage,
+            ))),
             _ => Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Kernel returned unexpected value in thin pool status")))
+                "Kernel returned unexpected value in thin pool status",
+            ))),
         }
     }
 
@@ -213,25 +237,28 @@ impl ThinPoolDev {
         Sectors(*blocks * *self.data_block_size)
     }
 
-    pub fn extend_data_dev(&mut self, segs: Vec<RaidSegment>)
-                           -> FroyoResult<()> {
-        try!(self.data_dev.borrow_mut().extend(segs));
-        try!(self.dm_reload());
+    pub fn extend_data_dev(&mut self, segs: Vec<RaidSegment>) -> FroyoResult<()> {
+        self.data_dev.borrow_mut().extend(segs)?;
+        self.dm_reload()?;
         Ok(())
     }
 
-    pub fn extend_meta_dev(&mut self, segs: Vec<RaidSegment>)
-                           -> FroyoResult<()> {
-        try!(self.meta_dev.borrow_mut().extend(segs));
-        try!(self.dm_reload());
+    pub fn extend_meta_dev(&mut self, segs: Vec<RaidSegment>) -> FroyoResult<()> {
+        self.meta_dev.borrow_mut().extend(segs)?;
+        self.dm_reload()?;
         Ok(())
     }
 
     fn dm_reload(&self) -> FroyoResult<()> {
-        let dm = try!(DM::new());
-        let table = [(0u64, *self.data_dev.borrow().length(), "thin-pool", &*self.params)];
+        let dm = DM::new()?;
+        let table = [(
+            0u64,
+            *self.data_dev.borrow().length(),
+            "thin-pool",
+            &*self.params,
+        )];
 
-        try!(self.dev.reload(&dm, &table));
+        self.dev.reload(&dm, &table)?;
 
         Ok(())
     }
@@ -264,20 +291,15 @@ impl ThinDev {
         name: &str,
         thin_number: u32,
         size: Sectors,
-        pool_dev: &ThinPoolDev)
-        -> FroyoResult<ThinDev> {
+        pool_dev: &ThinPoolDev,
+    ) -> FroyoResult<ThinDev> {
+        pool_dev
+            .dev
+            .message(dm, &format!("create_thin {}", thin_number))?;
 
-        try!(pool_dev.dev.message(dm, &format!("create_thin {}", thin_number)));
+        let mut td = ThinDev::setup(dm, froyo_id, name, thin_number, size, pool_dev)?;
 
-        let mut td = try!(ThinDev::setup(
-            dm,
-            froyo_id,
-            name,
-            thin_number,
-            size,
-            pool_dev));
-
-        try!(td.create_fs(name));
+        td.create_fs(name)?;
 
         Ok(td)
     }
@@ -288,29 +310,29 @@ impl ThinDev {
         name: &str,
         thin_number: u32,
         size: Sectors,
-        pool_dev: &ThinPoolDev)
-        -> FroyoResult<ThinDev> {
-
+        pool_dev: &ThinPoolDev,
+    ) -> FroyoResult<ThinDev> {
         let params = format!("{} {}", pool_dev.dev.dstr(), thin_number);
         let table = [(0u64, *size, "thin", &*params)];
 
         let dm_name = format!("froyo-thin-{}-{}", froyo_id, thin_number);
-        let thin_dev = try!(DmDevice::new(dm, &dm_name, &table));
+        let thin_dev = DmDevice::new(dm, &dm_name, &table)?;
 
-        try!(ThinDev::create_devnode(name, thin_dev.dev));
+        ThinDev::create_devnode(name, thin_dev.dev)?;
 
         let thin = ThinDev {
             dev: thin_dev,
             name: name.to_owned(),
-            thin_number: thin_number,
-            size: size,
-            dm_name: dm_name,
+            thin_number,
+            size,
+            dm_name,
             params: params.clone(),
         };
 
-        if let ThinStatus::Fail = try!(thin.status()) {
+        if let ThinStatus::Fail = thin.status()? {
             return Err(FroyoError::Froyo(InternalError(
-                "Froyodev thin device is failed".into())))
+                "Froyodev thin device is failed".into(),
+            )));
         }
 
         Ok(thin)
@@ -319,24 +341,23 @@ impl ThinDev {
     pub fn teardown(&mut self, dm: &DM) -> FroyoResult<()> {
         // Do this first so if devnode is in use this fails before we
         // remove the devnode
-        try!(self.dev.teardown(dm));
-        try!(self.remove_devnode());
+        self.dev.teardown(dm)?;
+        self.remove_devnode()?;
 
         Ok(())
     }
 
     pub fn extend(&mut self, sectors: Sectors) -> FroyoResult<()> {
-
         self.size = self.size + sectors;
 
-        let dm = try!(DM::new());
+        let dm = DM::new()?;
         let id = &DevId::Name(&self.dm_name);
 
         let table = [(0u64, *self.size, "thin", &*self.params)];
 
-        try!(dm.table_load(id, &table));
-        try!(dm.device_suspend(id, DM_SUSPEND));
-        try!(dm.device_suspend(id, DmFlags::empty()));
+        dm.table_load(id, &table)?;
+        dm.device_suspend(id, DM_SUSPEND)?;
+        dm.device_suspend(id, DmFlags::empty())?;
 
         // TODO: we need to know where it's mounted in order to call
         // this
@@ -356,26 +377,27 @@ impl ThinDev {
     }
 
     pub fn status(&self) -> FroyoResult<ThinStatus> {
-        let dm = try!(DM::new());
+        let dm = DM::new()?;
 
-        let (_, mut status) = try!(
-            dm.table_status(&DevId::Name(&self.dm_name), DmFlags::empty()));
+        let (_, mut status) = dm.table_status(&DevId::Name(&self.dm_name), DmFlags::empty())?;
 
         if status.len() != 1 {
             return Err(FroyoError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Expected 1 line from thin status")))
+                "Expected 1 line from thin status",
+            )));
         }
 
         // We should either get 1 line or the kernel is broken
         let status_line = status.pop().unwrap().3;
         if status_line.starts_with("Fail") {
-            return Ok(ThinStatus::Fail)
+            return Ok(ThinStatus::Fail);
         }
         let status_vals = status_line.split(' ').collect::<Vec<_>>();
 
         Ok(ThinStatus::Good(Sectors(
-            status_vals[0].parse::<u64>().unwrap())))
+            status_vals[0].parse::<u64>().unwrap(),
+        )))
     }
 
     fn create_devnode(name: &str, dev: Device) -> FroyoResult<()> {
@@ -383,21 +405,23 @@ impl ThinDev {
 
         if let Err(e) = fs::create_dir(&pathbuf) {
             if e.kind() != io::ErrorKind::AlreadyExists {
-                return Err(FroyoError::Io(e))
+                return Err(FroyoError::Io(e));
             }
         }
 
         pathbuf.push(name);
 
         let old_umask = umask(Mode::empty());
-        let res = mknod(&pathbuf,
-                    S_IFBLK,
-                    S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP,
-                    dev.into());
+        let res = mknod(
+            &pathbuf,
+            SFlag::S_IFBLK,
+            Mode::S_IRUSR | Mode::S_IWUSR | Mode::S_IRGRP | Mode::S_IWGRP,
+            dev.into(),
+        );
         umask(old_umask);
         if let Err(e) = res {
-            if e.errno() != EEXIST {
-                return Err(FroyoError::Nix(e))
+            if e != EEXIST {
+                return Err(FroyoError::Nix(e));
             }
         }
 
@@ -407,24 +431,25 @@ impl ThinDev {
     fn remove_devnode(&mut self) -> FroyoResult<()> {
         let mut pathbuf = PathBuf::from("/dev/froyo");
         pathbuf.push(&self.name);
-        try!(fs::remove_file(&pathbuf));
+        fs::remove_file(&pathbuf)?;
 
         Ok(())
     }
 
     fn create_fs(&mut self, name: &str) -> FroyoResult<()> {
         let dev_name = format!("/dev/froyo/{}", name);
-        let output = try!(Command::new("mkfs.xfs")
-                          .arg("-f")
-                          .arg(&dev_name)
-                          .output());
+        let output = Command::new("mkfs.xfs").arg("-f").arg(&dev_name).output()?;
 
-        if output.status.success(){
+        if output.status.success() {
             dbgp!("Created xfs filesystem on {}", dev_name)
         } else {
             return Err(FroyoError::Froyo(InternalError(
-                format!("XFS mkfs error: {}",
-                        String::from_utf8_lossy(&output.stderr)).into())))
+                format!(
+                    "XFS mkfs error: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+                .into(),
+            )));
         }
         Ok(())
     }

@@ -5,7 +5,7 @@
 use std::fs::File;
 use std::os::unix::prelude::AsRawFd;
 
-use types::{FroyoResult, FroyoError};
+use types::{FroyoError, FroyoResult};
 
 pub fn align_to(num: u64, align_to: u64) -> u64 {
     let agn = align_to - 1;
@@ -13,7 +13,7 @@ pub fn align_to(num: u64, align_to: u64) -> u64 {
     (num + agn) & !agn
 }
 
-ioctl!(read blkgetsize64 with 0x12, 114; u64);
+ioctl_read!(blkgetsize64, 0x12, 114, u64);
 
 pub fn blkdev_size(file: &File) -> FroyoResult<u64> {
     let mut val: u64 = 0;

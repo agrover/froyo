@@ -1,7 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use types::{Sectors, SectorOffset, DataBlocks};
+use types::{DataBlocks, SectorOffset, Sectors};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockDevSave {
@@ -30,7 +32,7 @@ pub struct FroyoSave {
     pub raid_devs: BTreeMap<String, RaidDevSave>,
     pub thin_pool_dev: ThinPoolDevSave,
     pub thin_devs: Vec<ThinDevSave>,
-    #[serde(skip_serializing_if="Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temp_dev: Option<TempDevSave>,
 }
 
@@ -60,7 +62,7 @@ pub struct RaidDevSave {
 pub struct RaidSegmentSave {
     pub start: SectorOffset,
     pub length: Sectors,
-    pub parent: String,  // RaidDev id
+    pub parent: String, // RaidDev id
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

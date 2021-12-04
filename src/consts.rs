@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use types::{Sectors, SectorOffset};
+use types::{SectorOffset, Sectors};
 
 pub const DBUS_TIMEOUT: i32 = 20000; // millieconds
 
@@ -39,8 +39,8 @@ pub const MAX_DATA_ZONE_SECTORS: Sectors = Sectors(MAX_DATA_ZONE_SIZE / SECTOR_S
 
 //const MIN_DEV_SECTORS: u64 = MIN_DEV_SIZE / SECTOR_SIZE;
 
-pub const MAX_REGIONS: u64 = (2 * MEGA);
-const DEFAULT_REGION_SIZE: u64 = (4 * MEGA);
+pub const MAX_REGIONS: u64 = 2 * MEGA;
+const DEFAULT_REGION_SIZE: u64 = 4 * MEGA;
 pub const DEFAULT_REGION_SECTORS: Sectors = Sectors(DEFAULT_REGION_SIZE / SECTOR_SIZE);
 
 // Try to create this many raids in a Froyodev. Too many is wasteful
