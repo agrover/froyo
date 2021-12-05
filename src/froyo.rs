@@ -12,9 +12,9 @@ use std::path::Path;
 use std::rc::Rc;
 
 use bytesize::ByteSize;
+use chrono::Utc;
 use devicemapper::DM;
 use serde_json;
-use time;
 use uuid::Uuid;
 
 use blockdev::LinearSegment;
@@ -395,7 +395,7 @@ impl<'a> Froyo<'a> {
 
     pub fn save_state(&self) -> FroyoResult<()> {
         let metadata = self.to_metadata()?;
-        let current_time = time::now().to_timespec();
+        let current_time = Utc::now();
 
         for bd in self.block_devs.0.values() {
             if let Some(bd) = bd.present() {

@@ -15,10 +15,10 @@ use std::str::FromStr;
 
 use byteorder::{ByteOrder, LittleEndian};
 use bytesize::ByteSize;
+use chrono::{DateTime, NaiveDateTime, Utc, MIN_DATETIME};
 use crc::crc32;
 use devicemapper::{Device, DM};
 use nix::sys::stat;
-use time::Timespec;
 use uuid::Uuid;
 
 use consts::*;
@@ -30,7 +30,7 @@ pub use crate::serialize::{BlockDevSave, LinearDevSave, LinearSegment};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Mda {
-    pub last_updated: Timespec,
+    pub last_updated: DateTime<Utc>,
     length: u32,
     crc: u32,
     offset: SectorOffset,
@@ -119,13 +119,13 @@ impl BlockDev {
             path: path.to_owned(),
             sectors: Sectors(dev_size / SECTOR_SIZE),
             mdaa: Mda {
-                last_updated: Timespec::new(0, 0),
+                last_updated: MIN_DATETIME,
                 length: 0,
                 crc: 0,
                 offset: MDAA_ZONE_OFFSET,
             },
             mdab: Mda {
-                last_updated: Timespec::new(0, 0),
+                last_updated: MIN_DATETIME,
                 length: 0,
                 crc: 0,
                 offset: MDAB_ZONE_OFFSET,
@@ -182,18 +182,24 @@ impl BlockDev {
             path: path.to_owned(),
             sectors,
             mdaa: Mda {
-                last_updated: Timespec::new(
-                    LittleEndian::read_u64(&buf[64..72]) as i64,
-                    LittleEndian::read_u32(&buf[72..76]) as i32,
+                last_updated: DateTime::<Utc>::from_utc(
+                    NaiveDateTime::from_timestamp(
+                        LittleEndian::read_u64(&buf[64..72]) as i64,
+                        LittleEndian::read_u32(&buf[72..76]),
+                    ),
+                    Utc,
                 ),
                 length: LittleEndian::read_u32(&buf[76..80]),
                 crc: LittleEndian::read_u32(&buf[80..84]),
                 offset: MDAA_ZONE_OFFSET,
             },
             mdab: Mda {
-                last_updated: Timespec::new(
-                    LittleEndian::read_u64(&buf[96..104]) as i64,
-                    LittleEndian::read_u32(&buf[104..108]) as i32,
+                last_updated: DateTime::<Utc>::from_utc(
+                    NaiveDateTime::from_timestamp(
+                        LittleEndian::read_u64(&buf[96..104]) as i64,
+                        LittleEndian::read_u32(&buf[104..108]),
+                    ),
+                    Utc,
                 ),
                 length: LittleEndian::read_u32(&buf[108..112]),
                 crc: LittleEndian::read_u32(&buf[112..116]),
@@ -277,7 +283,7 @@ impl BlockDev {
             Ordering::Equal => &self.mdab,
         };
 
-        if younger_mda.last_updated == Timespec::new(0, 0) {
+        if younger_mda.last_updated == MIN_DATETIME {
             return Err(FroyoError::Io(io::Error::new(
                 ErrorKind::InvalidInput,
                 "Neither Mda region is in use",
@@ -303,7 +309,7 @@ impl BlockDev {
     }
 
     // Write metadata to least-recently-written Mda
-    fn write_mdax(&mut self, time: &Timespec, metadata: &[u8]) -> FroyoResult<()> {
+    fn write_mdax(&mut self, time: &DateTime<Utc>, metadata: &[u8]) -> FroyoResult<()> {
         let older_mda = match self.mdaa.last_updated.cmp(&self.mdab.last_updated) {
             Ordering::Less => &mut self.mdaa,
             Ordering::Greater => &mut self.mdab,
@@ -341,13 +347,19 @@ impl BlockDev {
         // no flags
         buf[32..64].clone_from_slice(self.id.as_bytes());
 
-        LittleEndian::write_u64(&mut buf[64..72], self.mdaa.last_updated.sec as u64);
-        LittleEndian::write_u32(&mut buf[72..76], self.mdaa.last_updated.nsec as u32);
+        LittleEndian::write_u64(&mut buf[64..72], self.mdaa.last_updated.timestamp() as u64);
+        LittleEndian::write_u32(
+            &mut buf[72..76],
+            self.mdaa.last_updated.timestamp_subsec_nanos(),
+        );
         LittleEndian::write_u32(&mut buf[76..80], self.mdaa.length);
         LittleEndian::write_u32(&mut buf[80..84], self.mdaa.crc);
 
-        LittleEndian::write_u64(&mut buf[96..104], self.mdab.last_updated.sec as u64);
-        LittleEndian::write_u32(&mut buf[104..108], self.mdab.last_updated.nsec as u32);
+        LittleEndian::write_u64(&mut buf[96..104], self.mdab.last_updated.timestamp() as u64);
+        LittleEndian::write_u32(
+            &mut buf[104..108],
+            self.mdab.last_updated.timestamp_subsec_nanos(),
+        );
         LittleEndian::write_u32(&mut buf[108..112], self.mdab.length);
         LittleEndian::write_u32(&mut buf[112..116], self.mdab.crc);
 
@@ -385,7 +397,7 @@ impl BlockDev {
         Ok(())
     }
 
-    pub fn save_state(&mut self, time: &Timespec, metadata: &[u8]) -> FroyoResult<()> {
+    pub fn save_state(&mut self, time: &DateTime<Utc>, metadata: &[u8]) -> FroyoResult<()> {
         self.write_mdax(time, metadata)?;
         self.write_mda_header()?;
 

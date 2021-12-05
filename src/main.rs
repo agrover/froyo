@@ -19,12 +19,12 @@ extern crate clap;
 extern crate nix;
 extern crate byteorder;
 extern crate bytesize;
+extern crate chrono;
 extern crate crc;
 extern crate dbus;
 extern crate serde;
 extern crate serde_json;
 extern crate term;
-extern crate time;
 extern crate uuid;
 
 #[macro_use]
@@ -63,10 +63,10 @@ use std::process::exit;
 use std::rc::Rc;
 
 use bytesize::ByteSize;
+use chrono::{Duration, Utc, MIN_DATETIME};
 use clap::{App, Arg, ArgMatches, SubCommand};
 use dbus::{BusType, Connection, FromMessageItem, Message, MessageItem, Props};
 use dbus::{ConnectionItem, MessageType};
-use time::{Duration, Timespec};
 
 use consts::{DBUS_TIMEOUT, SECTOR_SIZE};
 use froyo::Froyo;
@@ -488,7 +488,7 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
 
     // TODO: event loop needs to handle dbus and also dm events (or polling)
     // so we can extend/reshape/delay/whatever in a timely fashion
-    let mut last_time = Timespec::new(0, 0);
+    let mut last_time = MIN_DATETIME;
     for c_item in c.iter(10000) {
         if let ConnectionItem::MethodCall(ref msg) = c_item {
             if msg.msg_type() != MessageType::MethodCall {
@@ -508,7 +508,7 @@ fn dbus_server(_args: &ArgMatches) -> FroyoResult<()> {
             }
         }
 
-        let now = time::now().to_timespec();
+        let now = Utc::now();
         if now < last_time + Duration::seconds(30) {
             continue;
         }
