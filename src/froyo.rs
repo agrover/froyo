@@ -34,7 +34,7 @@ pub use serialize::FroyoSave;
 
 #[derive(Debug, Clone)]
 pub struct Froyo<'a> {
-    pub id: String,
+    pub id: Uuid,
     pub name: String,
     pub block_devs: BlockDevs,
     raid_devs: RaidDevs,
@@ -110,19 +110,18 @@ impl<'a> Froyo<'a> {
             )));
         }
 
-        let froyo_id = Uuid::new_v4().to_simple_string();
+        let froyo_id = Uuid::new_v4();
         let mut block_devs = BlockDevs(BTreeMap::new());
         for path in paths {
-            let bd = BlockDev::new(&froyo_id, path.borrow(), force)?;
-            block_devs.0.insert(
-                bd.id.clone(),
-                BlockMember::Present(Rc::new(RefCell::new(bd))),
-            );
+            let bd = BlockDev::new(froyo_id, path.borrow(), force)?;
+            block_devs
+                .0
+                .insert(bd.id, BlockMember::Present(Rc::new(RefCell::new(bd))));
         }
 
         let dm = DM::new()?;
 
-        let raid_devs = RaidDevs::new(&dm, &froyo_id, &block_devs)?;
+        let raid_devs = RaidDevs::new(&dm, froyo_id, &block_devs)?;
 
         let meta_size = TPOOL_INITIAL_META_SECTORS;
         let data_size = TPOOL_INITIAL_DATA_SECTORS;
@@ -134,7 +133,7 @@ impl<'a> Froyo<'a> {
             io::Error::new(io::ErrorKind::InvalidInput, "no space for thinpool data")
         })?;
         let thin_pool_dev =
-            ThinPoolDev::new(&dm, &froyo_id, meta_raid_segments, data_raid_segments)?;
+            ThinPoolDev::new(&dm, froyo_id, meta_raid_segments, data_raid_segments)?;
 
         Ok(Froyo {
             name: name.to_owned(),
@@ -157,7 +156,7 @@ impl<'a> Froyo<'a> {
         // Create an initial 1TB thin dev
         self.thin_devs.push(ThinDev::new(
             &dm,
-            &self.id,
+            self.id,
             &self.name, // 1st thindev name same as froyodev name
             0,
             THIN_INITIAL_SECTORS,
@@ -180,7 +179,7 @@ impl<'a> Froyo<'a> {
                 .raid_devs
                 .raids
                 .iter()
-                .map(|(id, rd)| (id.clone(), rd.borrow().to_save()))
+                .map(|(id, rd)| (*id, rd.borrow().to_save()))
                 .collect(),
             temp_dev: self
                 .raid_devs
@@ -213,7 +212,7 @@ impl<'a> Froyo<'a> {
         let mut froyo_devs = BTreeMap::new();
         for bd in BlockDev::find_all()? {
             froyo_devs
-                .entry(bd.froyodev_id.clone())
+                .entry(bd.froyodev_id)
                 .or_insert_with(Vec::new)
                 .push(bd);
         }
@@ -267,18 +266,18 @@ impl<'a> Froyo<'a> {
     ) -> FroyoResult<BlockDevs> {
         let mut bd_map = found_block_devs
             .into_iter()
-            .map(|x| (x.id.clone(), x))
+            .map(|x| (x.id, x))
             .collect::<BTreeMap<_, _>>();
 
         let mut block_devs = BTreeMap::new();
         for (id, sbd) in &froyo_save.block_devs {
             match bd_map.remove(id) {
                 Some(bd) => {
-                    block_devs.insert(id.clone(), BlockMember::Present(Rc::new(RefCell::new(bd))));
+                    block_devs.insert(*id, BlockMember::Present(Rc::new(RefCell::new(bd))));
                 }
                 None => {
                     dbgp!("missing a blockdev: id {} path {}", id, sbd.path.display());
-                    block_devs.insert(id.clone(), BlockMember::Absent(sbd.clone()));
+                    block_devs.insert(*id, BlockMember::Absent(sbd.clone()));
                 }
             }
         }
@@ -306,31 +305,31 @@ impl<'a> Froyo<'a> {
         let mut raid_segments = Vec::new();
         for seg in &tpd.meta_dev.segments {
             let raid_seg = raid_devs
-                .lookup_segment(&seg.parent, seg.start, seg.length)
+                .lookup_segment(seg.parent, seg.start, seg.length)
                 .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidInput, "Could not find meta's parent")
                 })?;
             raid_segments.push(raid_seg);
         }
 
-        let meta_raid_dev = RaidLinearDev::setup(dm, &meta_name, &tpd.meta_dev.id, raid_segments)?;
+        let meta_raid_dev = RaidLinearDev::setup(dm, &meta_name, tpd.meta_dev.id, raid_segments)?;
 
         let data_name = format!("thin-data-{}", froyo_save.id);
         let mut raid_segments = Vec::new();
         for seg in &tpd.data_dev.segments {
             let raid_seg = raid_devs
-                .lookup_segment(&seg.parent, seg.start, seg.length)
+                .lookup_segment(seg.parent, seg.start, seg.length)
                 .ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidInput, "Could not find data's parent")
                 })?;
             raid_segments.push(raid_seg);
         }
 
-        let data_raid_dev = RaidLinearDev::setup(dm, &data_name, &tpd.data_dev.id, raid_segments)?;
+        let data_raid_dev = RaidLinearDev::setup(dm, &data_name, tpd.data_dev.id, raid_segments)?;
 
         ThinPoolDev::setup(
             dm,
-            &froyo_save.id,
+            froyo_save.id,
             tpd.data_block_size,
             tpd.low_water_blocks,
             meta_raid_dev,
@@ -340,7 +339,7 @@ impl<'a> Froyo<'a> {
 
     fn setup(
         froyo_save: &FroyoSave,
-        froyo_id: String,
+        froyo_id: Uuid,
         found_blockdevs: Vec<BlockDev>,
     ) -> FroyoResult<Froyo<'a>> {
         let block_devs = Froyo::setup_blockdevs(froyo_save, found_blockdevs)?;
@@ -355,7 +354,7 @@ impl<'a> Froyo<'a> {
         for std in &froyo_save.thin_devs {
             thin_devs.push(ThinDev::setup(
                 &dm,
-                &froyo_save.id,
+                froyo_save.id,
                 &std.name,
                 std.thin_number,
                 std.size,
@@ -583,7 +582,7 @@ impl<'a> Froyo<'a> {
                                     format!(
                                         "Block member {} already present \
                                                  in froyodev {}",
-                                        short_id(&found_bd.id),
+                                        short_id(found_bd.id),
                                         self.name
                                     )
                                     .into(),
@@ -594,7 +593,7 @@ impl<'a> Froyo<'a> {
                             // Known but absent
                             let found_bd = Rc::new(RefCell::new(found_bd));
                             self.raid_devs
-                                .add_existing_block_device(&self.id, &found_bd)?;
+                                .add_existing_block_device(self.id, &found_bd)?;
                             found_bd
                         } else {
                             dbgp!(
@@ -604,8 +603,8 @@ impl<'a> Froyo<'a> {
                                 self.name
                             );
                             let new_bd =
-                                Rc::new(RefCell::new(BlockDev::new(&self.id, path, force)?));
-                            self.raid_devs.add_new_block_device(&self.id, &new_bd)?;
+                                Rc::new(RefCell::new(BlockDev::new(self.id, path, force)?));
+                            self.raid_devs.add_new_block_device(self.id, &new_bd)?;
                             new_bd
                         }
                     } else {
@@ -619,7 +618,7 @@ impl<'a> Froyo<'a> {
                                      {}, id {}",
                                 path.display(),
                                 froyo_save.name,
-                                short_id(&froyo_save.id)
+                                short_id(froyo_save.id)
                             )
                             .into(),
                         )));
@@ -628,8 +627,8 @@ impl<'a> Froyo<'a> {
                 Err(_) => {
                     // setup() failed, so blockdev is not a current
                     // froyo member disk. Initialize and add it.
-                    let bd = Rc::new(RefCell::new(BlockDev::new(&self.id, path, force)?));
-                    self.raid_devs.add_new_block_device(&self.id, &bd)?;
+                    let bd = Rc::new(RefCell::new(BlockDev::new(self.id, path, force)?));
+                    self.raid_devs.add_new_block_device(self.id, &bd)?;
                     bd
                 }
             }
@@ -639,7 +638,7 @@ impl<'a> Froyo<'a> {
         // existing entry
         self.block_devs
             .0
-            .insert(bd.borrow().id.clone(), BlockMember::Present(bd.clone()));
+            .insert(bd.borrow().id, BlockMember::Present(bd.clone()));
 
         Ok(())
     }
@@ -730,7 +729,7 @@ impl<'a> Froyo<'a> {
                         RaidMember::Removed
                     } else {
                         let parent = ld.borrow().parent.upgrade().unwrap();
-                        let parent_id = parent.borrow().id.clone();
+                        let parent_id = parent.borrow().id;
                         RaidMember::Absent((parent_id, ld.borrow().to_save()))
                     }
                 };
@@ -752,7 +751,7 @@ impl<'a> Froyo<'a> {
         } else {
             self.block_devs
                 .0
-                .insert(blockdev.id.clone(), BlockMember::Absent(blockdev.to_save()));
+                .insert(blockdev.id, BlockMember::Absent(blockdev.to_save()));
         }
 
         Ok(())
@@ -1174,7 +1173,7 @@ impl<'a> Froyo<'a> {
             let mut rd = rd.borrow_mut();
             if rd.is_empty() && !rd.is_safe() {
                 rd.destroy(&dm)?;
-                removed.push(id.clone());
+                removed.push(*id);
             }
         }
 
@@ -1187,7 +1186,7 @@ impl<'a> Froyo<'a> {
 
         if self
             .raid_devs
-            .create_redundant_zones(&dm, &self.id, &self.block_devs)?
+            .create_redundant_zones(&dm, self.id, &self.block_devs)?
         {
             dbgp!("created new raids, syncing");
             self.save_state()?;
@@ -1235,7 +1234,7 @@ impl<'a> Froyo<'a> {
         // create the source linear mapping target
         let src_dev = TempDev::new(
             &dm,
-            &self.id,
+            self.id,
             &[(
                 TempLayer::Raid(raid_seg.parent.raid()),
                 LinearSegment::new(raid_seg.start, raid_seg.length),
@@ -1243,12 +1242,12 @@ impl<'a> Froyo<'a> {
         )?;
 
         // create the destination linear mapping target
-        let dest_dev = TempDev::new(&dm, &self.id, &new_space)?;
+        let dest_dev = TempDev::new(&dm, self.id, &new_space)?;
 
         b_src.dev.suspend(&dm)?;
         let mirror_dev = MirrorDev::new(
             &dm,
-            &self.id,
+            self.id,
             Rc::new(RefCell::new(src_dev)),
             Rc::new(RefCell::new(dest_dev)),
             raid_seg.length,
@@ -1279,7 +1278,7 @@ impl<'a> Froyo<'a> {
 
         // We need to copy all raidsegs on a degraded raid to scratch, because
         // we want it to be empty so we can destroy/remake it. fml...
-        let mut v: BTreeMap<String, Vec<(usize, &RaidSegment)>> = BTreeMap::new();
+        let mut v: BTreeMap<Uuid, Vec<(usize, &RaidSegment)>> = BTreeMap::new();
         for (idx, rs) in b_src.segments.iter().enumerate().filter(|&(_, rs)| {
             let rd = rs.parent.raid();
             let b_rd = rd.borrow();
@@ -1333,15 +1332,15 @@ impl<'a> Froyo<'a> {
         let dm = DM::new()?;
 
         // create the source linear mapping target
-        let src_dev = TempDev::new(&dm, &self.id, &*raid_segs_ls)?;
+        let src_dev = TempDev::new(&dm, self.id, &*raid_segs_ls)?;
 
         // create the destination linear mapping target
-        let dest_dev = TempDev::new(&dm, &self.id, &*scratch_areas)?;
+        let dest_dev = TempDev::new(&dm, self.id, &*scratch_areas)?;
 
         b_src.dev.suspend(&dm)?;
         let mirror_dev = MirrorDev::new(
             &dm,
-            &self.id,
+            self.id,
             Rc::new(RefCell::new(src_dev)),
             Rc::new(RefCell::new(dest_dev)),
             spc_needed,
@@ -1415,12 +1414,12 @@ impl<'a> Froyo<'a> {
                 )
             })
             .collect::<Vec<_>>();
-        let dest_dev = TempDev::new(&dm, &self.id, &tmp_segments)?;
+        let dest_dev = TempDev::new(&dm, self.id, &tmp_segments)?;
 
         dest.borrow().dev.suspend(&dm)?;
         let mirror_dev = MirrorDev::new(
             &dm,
-            &self.id,
+            self.id,
             src_dev,
             Rc::new(RefCell::new(dest_dev)),
             len,

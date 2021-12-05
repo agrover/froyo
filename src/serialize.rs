@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -21,15 +22,15 @@ pub struct LinearSegment {
 pub struct LinearDevSave {
     pub meta_segments: Vec<LinearSegment>,
     pub data_segments: Vec<LinearSegment>,
-    pub parent: String,
+    pub parent: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FroyoSave {
     pub name: String,
-    pub id: String,
-    pub block_devs: BTreeMap<String, BlockDevSave>,
-    pub raid_devs: BTreeMap<String, RaidDevSave>,
+    pub id: Uuid,
+    pub block_devs: BTreeMap<Uuid, BlockDevSave>,
+    pub raid_devs: BTreeMap<Uuid, RaidDevSave>,
     pub thin_pool_dev: ThinPoolDevSave,
     pub thin_devs: Vec<ThinDevSave>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,14 +39,14 @@ pub struct FroyoSave {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TempDevSegmentSave {
-    pub parent: String,
+    pub parent: Uuid,
     pub start: SectorOffset,
     pub length: Sectors,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TempDevSave {
-    pub id: String,
+    pub id: Uuid,
     pub segments: Vec<TempDevSegmentSave>,
 }
 
@@ -55,19 +56,19 @@ pub struct RaidDevSave {
     pub region_sectors: Sectors,
     pub length: Sectors,
     pub member_count: usize,
-    pub members: BTreeMap<String, LinearDevSave>,
+    pub members: BTreeMap<usize, LinearDevSave>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaidSegmentSave {
     pub start: SectorOffset,
     pub length: Sectors,
-    pub parent: String, // RaidDev id
+    pub parent: Uuid, // RaidDev id
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaidLinearDevSave {
-    pub id: String,
+    pub id: Uuid,
     pub segments: Vec<RaidSegmentSave>,
 }
 

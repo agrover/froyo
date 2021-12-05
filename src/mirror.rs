@@ -31,7 +31,7 @@ pub struct MirrorDev {
 impl MirrorDev {
     pub fn new(
         dm: &DM,
-        name: &str,
+        froyo_id: Uuid,
         src: Rc<RefCell<TempDev>>,
         dest: Rc<RefCell<TempDev>>,
         length: Sectors,
@@ -49,7 +49,7 @@ impl MirrorDev {
                 dest.borrow().dmdev.dstr()
             ),
         );
-        let dm_name = format!("froyo-copymirror-{}", name);
+        let dm_name = format!("froyo-copymirror-{}", froyo_id);
         let mirror_dev = DmDevice::new(dm, &dm_name, &[table])?;
 
         Ok(MirrorDev {
@@ -127,17 +127,17 @@ impl TempLayer {
         }
     }
 
-    pub fn id(&self) -> String {
+    pub fn id(&self) -> Uuid {
         match *self {
-            TempLayer::Block(ref bd) => bd.borrow().id.to_owned(),
-            TempLayer::Raid(ref rd) => rd.borrow().id.to_owned(),
+            TempLayer::Block(ref bd) => bd.borrow().id,
+            TempLayer::Raid(ref rd) => rd.borrow().id,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct TempDev {
-    pub id: String,
+    pub id: Uuid,
     pub dmdev: DmDevice,
     pub segments: Vec<(TempLayer, LinearSegment)>,
 }
@@ -147,7 +147,7 @@ pub struct TempDev {
 impl TempDev {
     pub fn new(
         dm: &DM,
-        name: &str,
+        froyo_id: Uuid,
         segments: &[(TempLayer, LinearSegment)],
     ) -> FroyoResult<TempDev> {
         let mut table = Vec::new();
@@ -163,8 +163,8 @@ impl TempDev {
             offset = offset + SectorOffset(*seg.length);
         }
 
-        let id = Uuid::new_v4().to_simple_string();
-        let dm_name = format!("froyo-linear-temp-{}-{}", name, id);
+        let id = Uuid::new_v4();
+        let dm_name = format!("froyo-linear-temp-{}-{}", froyo_id, id);
         let dmdev = DmDevice::new(dm, &dm_name, &table)?;
 
         Ok(TempDev {
@@ -192,7 +192,7 @@ impl TempDev {
                     }
                 }
 
-                let td = TempDev::new(dm, &froyo_save.id, &td_segs)?;
+                let td = TempDev::new(dm, froyo_save.id, &td_segs)?;
                 Ok(Some(td))
             }
         }

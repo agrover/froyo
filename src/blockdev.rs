@@ -11,7 +11,7 @@ use std::io;
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
-use std::str::{from_utf8, FromStr};
+use std::str::FromStr;
 
 use byteorder::{ByteOrder, LittleEndian};
 use bytesize::ByteSize;
@@ -38,9 +38,9 @@ pub struct Mda {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockDev {
-    pub froyodev_id: String,
+    pub froyodev_id: Uuid,
     pub dev: Device,
-    pub id: String,
+    pub id: Uuid,
     pub path: PathBuf,
     pub sectors: Sectors,
     pub mdaa: Mda,
@@ -65,7 +65,7 @@ impl BlockMember {
 }
 
 impl BlockDev {
-    pub fn new(froyodev_id: &str, path: &Path, force: bool) -> FroyoResult<BlockDev> {
+    pub fn new(froyodev_id: Uuid, path: &Path, force: bool) -> FroyoResult<BlockDev> {
         let pstat = stat::stat(path)?;
 
         if pstat.st_mode & 0x6000 != 0x6000 {
@@ -113,8 +113,8 @@ impl BlockDev {
         }
 
         let mut bd = BlockDev {
-            froyodev_id: froyodev_id.to_owned(),
-            id: Uuid::new_v4().to_simple_string(),
+            froyodev_id,
+            id: Uuid::new_v4(),
             dev,
             path: path.to_owned(),
             sectors: Sectors(dev_size / SECTOR_SIZE),
@@ -172,12 +172,12 @@ impl BlockDev {
 
         let sectors = Sectors(blkdev_size(&f)? / SECTOR_SIZE);
 
-        let id = from_utf8(&buf[32..64]).unwrap();
-        let froyodev_id = from_utf8(&buf[128..160]).unwrap();
+        let id = Uuid::from_slice(&buf[32..64]).unwrap();
+        let froyodev_id = Uuid::from_slice(&buf[128..160]).unwrap();
 
         Ok(BlockDev {
-            froyodev_id: froyodev_id.to_owned(),
-            id: id.to_owned(),
+            froyodev_id,
+            id,
             dev,
             path: path.to_owned(),
             sectors,
@@ -419,15 +419,15 @@ impl BlockDev {
 }
 
 #[derive(Debug, Clone)]
-pub struct BlockDevs(pub BTreeMap<String, BlockMember>);
+pub struct BlockDevs(pub BTreeMap<Uuid, BlockMember>);
 
 impl BlockDevs {
-    pub fn to_save(&self) -> BTreeMap<String, BlockDevSave> {
+    pub fn to_save(&self) -> BTreeMap<Uuid, BlockDevSave> {
         self.0
             .iter()
             .map(|(id, bd)| match *bd {
-                BlockMember::Present(ref bd) => (id.clone(), bd.borrow().to_save()),
-                BlockMember::Absent(ref sbd) => (id.clone(), sbd.clone()),
+                BlockMember::Present(ref bd) => (*id, bd.borrow().to_save()),
+                BlockMember::Absent(ref sbd) => (*id, sbd.clone()),
             })
             .collect()
     }
@@ -594,7 +594,7 @@ impl LinearDev {
 
     pub fn to_save(&self) -> LinearDevSave {
         let p_rc = self.parent.upgrade().unwrap();
-        let parent = p_rc.borrow().id.clone();
+        let parent = p_rc.borrow().id;
         LinearDevSave {
             meta_segments: self.meta_segments.clone(),
             data_segments: self.data_segments.clone(),

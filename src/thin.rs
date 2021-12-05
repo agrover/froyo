@@ -57,29 +57,19 @@ pub enum ThinPoolWorkingStatus {
 impl ThinPoolDev {
     pub fn new(
         dm: &DM,
-        id: &str,
+        id: Uuid,
         meta_segs: Vec<RaidSegment>,
         data_segs: Vec<RaidSegment>,
     ) -> FroyoResult<ThinPoolDev> {
         // meta
         let meta_name = format!("thin-meta-{}", id);
-        let meta_raid_dev = RaidLinearDev::new(
-            dm,
-            &meta_name,
-            &Uuid::new_v4().to_simple_string(),
-            meta_segs,
-        )?;
+        let meta_raid_dev = RaidLinearDev::new(dm, &meta_name, Uuid::new_v4(), meta_segs)?;
 
         meta_raid_dev.dev.clear()?;
 
         // data
         let data_name = format!("thin-data-{}", id);
-        let data_raid_dev = RaidLinearDev::new(
-            dm,
-            &data_name,
-            &Uuid::new_v4().to_simple_string(),
-            data_segs,
-        )?;
+        let data_raid_dev = RaidLinearDev::new(dm, &data_name, Uuid::new_v4(), data_segs)?;
 
         ThinPoolDev::setup(
             dm,
@@ -93,7 +83,7 @@ impl ThinPoolDev {
 
     pub fn setup(
         dm: &DM,
-        id: &str,
+        id: Uuid,
         data_block_size: Sectors,
         low_water_blocks: DataBlocks,
         meta_raid_dev: RaidLinearDev,
@@ -287,7 +277,7 @@ pub enum ThinStatus {
 impl ThinDev {
     pub fn new(
         dm: &DM,
-        froyo_id: &str,
+        froyo_id: Uuid,
         name: &str,
         thin_number: u32,
         size: Sectors,
@@ -306,7 +296,7 @@ impl ThinDev {
 
     pub fn setup(
         dm: &DM,
-        froyo_id: &str,
+        froyo_id: Uuid,
         name: &str,
         thin_number: u32,
         size: Sectors,
