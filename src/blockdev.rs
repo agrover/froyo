@@ -467,14 +467,13 @@ impl BlockDevs {
         self.0
             .values()
             .filter_map(|bd| bd.present())
-            .map(|bd| {
+            .flat_map(|bd| {
                 let areas = bd.borrow().avail_areas();
                 areas
                     .into_iter()
                     .map(|(offset, len)| (bd.clone(), offset, len))
                     .collect::<Vec<_>>()
             })
-            .flatten()
             .collect()
     }
 
