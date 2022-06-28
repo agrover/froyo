@@ -9,14 +9,12 @@ use std::rc::Rc;
 use devicemapper::DM;
 use uuid::Uuid;
 
-use blockdev::{BlockDev, BlockDevs, LinearSegment};
-use consts::*;
-use dmdevice::DmDevice;
-use froyo::FroyoSave;
-use raid::{RaidDev, RaidLinearDev};
-use types::{FroyoError, FroyoResult, InternalError, SectorOffset, Sectors, SumSectors};
-
-pub use serialize::{TempDevSave, TempDevSegmentSave};
+use crate::blockdev::{BlockDev, BlockDevs, LinearSegment};
+use crate::consts::*;
+use crate::dmdevice::DmDevice;
+use crate::raid::{RaidDev, RaidLinearDev};
+use crate::serialize::{FroyoSave, TempDevSave, TempDevSegmentSave};
+use crate::types::{FroyoError, FroyoResult, InternalError, SectorOffset, Sectors, SumSectors};
 
 #[derive(Debug, Clone)]
 pub struct MirrorDev {

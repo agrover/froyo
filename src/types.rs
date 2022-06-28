@@ -6,9 +6,11 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 use std::io;
-use std::ops::Add;
+use std::ops::{Add, Deref};
 
 use dbus;
+use macro_attr_2018::macro_attr;
+use newtype_derive_2018::*;
 use nix;
 use serde;
 use serde_json;
@@ -21,10 +23,10 @@ pub type FroyoResult<T> = Result<T, FroyoError>;
 // When needed, these can still be derefed to u64.
 // Derive a bunch of stuff so we can do ops on them.
 //
-custom_derive! {
-    #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
-             NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
-             NewtypeMul,
+macro_attr! {
+    #[derive(NewtypeAdd!, NewtypeSub!,
+             NewtypeBitAnd!, NewtypeNot!, NewtypeDiv!, NewtypeRem!,
+             NewtypeMul!,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct Sectors(pub u64);
 }
@@ -43,6 +45,13 @@ where
 }
 
 impl<T: Iterator> SumSectors for T where Sectors: Add<T::Item, Output = Sectors> {}
+
+impl Deref for Sectors {
+    type Target = u64;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl serde::Serialize for Sectors {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -63,12 +72,19 @@ impl<'de> serde::Deserialize<'de> for Sectors {
     }
 }
 
-custom_derive! {
-    #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
-             NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
-             NewtypeMul,
+macro_attr! {
+    #[derive(NewtypeAdd!, NewtypeSub!,
+             NewtypeBitAnd!, NewtypeNot!, NewtypeDiv!, NewtypeRem!,
+             NewtypeMul!,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct SectorOffset(pub u64);
+}
+
+impl Deref for SectorOffset {
+    type Target = u64;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl serde::Serialize for SectorOffset {
@@ -91,12 +107,19 @@ impl<'de> serde::Deserialize<'de> for SectorOffset {
 }
 
 // A type for Data Blocks as used by the thin pool.
-custom_derive! {
-    #[derive(NewtypeFrom, NewtypeAdd, NewtypeSub, NewtypeDeref,
-             NewtypeBitAnd, NewtypeNot, NewtypeDiv, NewtypeRem,
-             NewtypeMul,
+macro_attr! {
+    #[derive(NewtypeAdd!, NewtypeSub!,
+             NewtypeBitAnd!, NewtypeNot!, NewtypeDiv!, NewtypeRem!,
+             NewtypeMul!,
              Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
     pub struct DataBlocks(pub u64);
+}
+
+impl Deref for DataBlocks {
+    type Target = u64;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl serde::Serialize for DataBlocks {

@@ -15,12 +15,11 @@ use nix::errno::Errno::EEXIST;
 use nix::sys::stat::{mknod, umask, Mode, SFlag};
 use uuid::Uuid;
 
-use consts::*;
-use dmdevice::DmDevice;
-use raid::{RaidLinearDev, RaidSegment};
-use types::{DataBlocks, FroyoError, FroyoResult, InternalError, Sectors};
-
-pub use serialize::{ThinDevSave, ThinPoolDevSave};
+use crate::consts::*;
+use crate::dmdevice::DmDevice;
+use crate::raid::{RaidLinearDev, RaidSegment};
+use crate::serialize::{ThinDevSave, ThinPoolDevSave};
+use crate::types::{DataBlocks, FroyoError, FroyoResult, InternalError, Sectors};
 
 #[derive(Debug, Clone)]
 pub struct ThinPoolDev {

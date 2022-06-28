@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use types::{SectorOffset, Sectors};
+use crate::types::{SectorOffset, Sectors};
 
 pub const DBUS_TIMEOUT: i32 = 20000; // millieconds
 

@@ -17,20 +17,21 @@ use devicemapper::DM;
 use serde_json;
 use uuid::Uuid;
 
-use blockdev::LinearSegment;
-use blockdev::{BlockDev, BlockDevs, BlockMember};
-use consts::*;
-use dbus_api::DbusContext;
-use mirror::{MirrorDev, TempDev, TempLayer};
-use raid::{RaidAction, RaidDevs, RaidLayer, RaidLinearDev, RaidMember, RaidSegment, RaidStatus};
-use thin::{ThinDev, ThinStatus};
-use thin::{ThinPoolDev, ThinPoolStatus, ThinPoolWorkingStatus};
-use types::{
+use crate::blockdev::LinearSegment;
+use crate::blockdev::{BlockDev, BlockDevs, BlockMember};
+use crate::consts::*;
+use crate::dbus_api::DbusContext;
+use crate::mirror::{MirrorDev, TempDev, TempLayer};
+use crate::raid::{
+    RaidAction, RaidDevs, RaidLayer, RaidLinearDev, RaidMember, RaidSegment, RaidStatus,
+};
+use crate::serialize::FroyoSave;
+use crate::thin::{ThinDev, ThinStatus};
+use crate::thin::{ThinPoolDev, ThinPoolStatus, ThinPoolWorkingStatus};
+use crate::types::{
     DataBlocks, FroyoError, FroyoResult, InternalError, SectorOffset, Sectors, SumSectors,
 };
-use util::short_id;
-
-pub use serialize::FroyoSave;
+use crate::util::short_id;
 
 #[derive(Debug, Clone)]
 pub struct Froyo<'a> {

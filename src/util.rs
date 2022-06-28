@@ -5,9 +5,10 @@
 use std::fs::File;
 use std::os::unix::prelude::AsRawFd;
 
+use nix::ioctl_read;
 use uuid::Uuid;
 
-use types::{FroyoError, FroyoResult};
+use crate::types::{FroyoError, FroyoResult};
 
 pub fn align_to(num: u64, align_to: u64) -> u64 {
     let agn = align_to - 1;
@@ -28,7 +29,7 @@ pub fn blkdev_size(file: &File) -> FroyoResult<u64> {
 
 pub fn short_id(id: Uuid) -> String {
     let mut shortstr = id
-        .to_simple()
+        .as_simple()
         .encode_lower(&mut Uuid::encode_buffer())
         .to_owned();
     shortstr.truncate(8);

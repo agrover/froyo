@@ -13,15 +13,13 @@ use std::rc::Rc;
 use devicemapper::DM;
 use uuid::Uuid;
 
-use blockdev::{BlockDev, BlockDevs, BlockMember, LinearDev, LinearDevSave, LinearSegment};
-use consts::*;
-use dmdevice::DmDevice;
-use froyo::FroyoSave;
-use mirror::TempDev;
-use types::{FroyoError, FroyoResult, InternalError, SectorOffset, Sectors, SumSectors};
-use util::align_to;
-
-pub use serialize::{RaidDevSave, RaidLinearDevSave, RaidSegmentSave};
+use crate::blockdev::{BlockDev, BlockDevs, BlockMember, LinearDev, LinearDevSave, LinearSegment};
+use crate::consts::*;
+use crate::dmdevice::DmDevice;
+use crate::mirror::TempDev;
+use crate::serialize::{FroyoSave, RaidDevSave, RaidLinearDevSave, RaidSegmentSave};
+use crate::types::{FroyoError, FroyoResult, InternalError, SectorOffset, Sectors, SumSectors};
+use crate::util::align_to;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaidDev {
@@ -132,7 +130,7 @@ impl RaidDev {
             )));
         }
 
-        let first_present_dev = devs.iter().filter_map(|x| x.present()).next().unwrap();
+        let first_present_dev = devs.iter().find_map(|x| x.present()).unwrap();
         let first_present_dev_len = first_present_dev.borrow().data_length();
 
         // Verify all present devs are the same length
@@ -350,7 +348,7 @@ impl RaidDev {
 
     pub fn per_member_size(&self) -> Option<(Sectors, Sectors)> {
         // all members should be the same size
-        if let Some(ld) = self.members.iter().filter_map(|rm| rm.present()).next() {
+        if let Some(ld) = self.members.iter().find_map(|rm| rm.present()) {
             let ld = ld.borrow();
             return Some((ld.metadata_length(), ld.data_length()));
         }

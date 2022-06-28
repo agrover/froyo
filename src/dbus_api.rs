@@ -12,9 +12,9 @@ use dbus::tree::{EmitsChangedSignal, Factory, Interface, MethodErr, MethodFn, Pr
 use dbus::MessageItem;
 use dbus::{Connection, NameFlag};
 
-use blockdev::{BlockDevs, BlockMember};
-use froyo::Froyo;
-use types::{FroyoError, FroyoResult};
+use crate::blockdev::{BlockDevs, BlockMember};
+use crate::froyo::Froyo;
+use crate::types::{FroyoError, FroyoResult};
 
 #[derive(Debug, Clone)]
 pub struct DbusContext<'a> {

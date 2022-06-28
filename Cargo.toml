@@ -1,21 +1,21 @@
 [package]
 name = "froyo"
-version = "0.1.0"
-authors = ["Andy Grover <agrover@redhat.com>"]
+version = "0.2.0"
+authors = ["Andy Grover <andy@groveronline.com>"]
+edition = "2021"
 
 [dependencies]
-clippy = { version = "0", optional = true }
 devicemapper = "0.4.7"
 clap = "1"
 nix = "0.23.0"
 crc = "1"
 byteorder = "0.3.13"
-uuid = { version = "0.8.2", features = ["serde", "v4"] }
+uuid = { version = "1.1.2", features = ["serde", "v4"] }
 chrono = "0.4.19"
 serde = { version = "1.0.130", features = ["derive"] }
 serde_json = "1.0.72"
-custom_derive = "0.1"
 bytesize = "0.1.1"
 dbus = "0.3"
 term = "0.7.0"
-newtype_derive = "0.1"
+newtype-derive-2018 = "0.0.6"
+macro-attr-2018 = "2.1.2"

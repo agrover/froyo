@@ -21,10 +21,10 @@ use devicemapper::{Device, DM};
 use nix::sys::stat;
 use uuid::Uuid;
 
-use consts::*;
-use dmdevice::DmDevice;
-use types::{FroyoError, FroyoResult, SectorOffset, Sectors, SumSectors};
-use util::blkdev_size;
+use crate::consts::*;
+use crate::dmdevice::DmDevice;
+use crate::types::{FroyoError, FroyoResult, SectorOffset, Sectors, SumSectors};
+use crate::util::blkdev_size;
 
 pub use crate::serialize::{BlockDevSave, LinearDevSave, LinearSegment};
 

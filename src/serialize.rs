@@ -4,7 +4,7 @@ use uuid::Uuid;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use types::{DataBlocks, SectorOffset, Sectors};
+use crate::types::{DataBlocks, SectorOffset, Sectors};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockDevSave {

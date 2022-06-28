@@ -2,42 +2,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#![cfg_attr(feature = "clippy", feature(plugin))]
-#![cfg_attr(feature = "clippy", plugin(clippy))]
-#![cfg_attr(not(feature = "clippy"), allow(unknown_lints))]
-#![allow(clippy::match_same_arms)] // we seem to have instances where same arms are good
-#![allow(clippy::if_not_else)]
-#![allow(clippy::similar_names)]
-#![allow(clippy::used_underscore_binding)]
-#![allow(clippy::collapsible_if)]
 #![allow(dead_code)] // only temporary, until more stuff is filled in
 
-extern crate devicemapper;
-#[macro_use]
-extern crate clap;
-#[macro_use]
-extern crate nix;
-extern crate byteorder;
-extern crate bytesize;
-extern crate chrono;
-extern crate crc;
-extern crate dbus;
-extern crate serde;
-extern crate serde_json;
-extern crate term;
-extern crate uuid;
-
-#[macro_use]
-extern crate custom_derive;
-#[macro_use]
-extern crate newtype_derive;
+// #[macro_use]
+// extern crate custom_derive;
+// #[macro_use]
+// extern crate newtype_derive;
 
 pub static mut DEBUG: bool = false;
 
 macro_rules! dbgp {
     ($($arg:tt)*) => (
         unsafe {
-            if ::DEBUG {
+            if crate::DEBUG {
                 println!($($arg)*)
             }
         })
@@ -64,7 +41,7 @@ use std::rc::Rc;
 
 use bytesize::ByteSize;
 use chrono::{Duration, Utc, MIN_DATETIME};
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{crate_version, App, Arg, ArgMatches, SubCommand};
 use dbus::{BusType, Connection, FromMessageItem, Message, MessageItem, Props};
 use dbus::{ConnectionItem, MessageType};
 
@@ -157,7 +134,6 @@ fn list(_args: &ArgMatches) -> FroyoResult<()> {
     Ok(())
 }
 
-#[allow(cyclomatic_complexity)]
 fn status(args: &ArgMatches) -> FroyoResult<()> {
     let name = args.value_of("froyodevname").unwrap();
     let c = Connection::froyo_connect()?;

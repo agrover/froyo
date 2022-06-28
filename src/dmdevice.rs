@@ -10,9 +10,9 @@ use std::io::{ErrorKind, Write};
 use devicemapper::dm::{DevId, DM};
 use devicemapper::{consts::DmFlags, consts::DM_SUSPEND, types::TargetLine, Device};
 
-use consts::*;
-use types::{FroyoError, FroyoResult};
-use util::blkdev_size;
+use crate::consts::*;
+use crate::types::{FroyoError, FroyoResult};
+use crate::util::blkdev_size;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DmDevice {
